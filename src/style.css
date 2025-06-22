@@ -1708,25 +1708,47 @@ p {
   left: 100%;
 }
 
-/* Material Suggestions - Bigger boxes at bottom left */
+/* Material Suggestions - Positioned in white section */
 .material-suggestions {
-  display: flex;
-  justify-content: flex-start;
-  gap: 12px;
-  padding: 16px;
+  padding: 24px;
+  margin-top: 16px;
+  background: var(--pure-white);
+  border-radius: 12px;
+  border: 1px solid var(--border-grey);
   opacity: 0;
-  transform: translateY(10px);
-  transition: all 0.3s ease;
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: linear-gradient(transparent, rgba(255, 255, 255, 0.9));
+  transform: translateY(20px);
+  transition: all 0.4s ease;
 }
 
 .material-suggestions.visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+.suggestions-header {
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.suggestions-header h4 {
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: var(--primary-black);
+  margin: 0 0 8px 0;
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+.suggestions-header p {
+  color: var(--accent-grey);
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.suggestions-grid {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 .suggestion-box {
@@ -1761,6 +1783,51 @@ p {
 
 .suggestion-box:hover img {
   transform: scale(1.1);
+}
+
+/* Responsive design for material suggestions */
+@media (max-width: 768px) {
+  .material-suggestions {
+    padding: 16px;
+    margin-top: 12px;
+  }
+  
+  .suggestions-header h4 {
+    font-size: 1.2rem;
+  }
+  
+  .suggestions-header p {
+    font-size: 0.9rem;
+  }
+  
+  .suggestions-grid {
+    gap: 12px;
+  }
+  
+  .suggestion-box {
+    width: 80px;
+    height: 80px;
+  }
+}
+
+@media (max-width: 480px) {
+  .chat-left-layout {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  
+  .material-suggestions {
+    padding: 12px;
+  }
+  
+  .suggestions-grid {
+    justify-content: space-around;
+  }
+  
+  .suggestion-box {
+    width: 70px;
+    height: 70px;
+  }
 }
 
 /* Hover tooltip for suggestion boxes */

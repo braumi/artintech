@@ -4,7 +4,7 @@ import { Router } from './router';
 // Main application logic
 class App {
   private appElement: HTMLElement | null;
-  private router: Router | null = null;
+  private router!: Router;
 
   constructor() {
     this.appElement = document.querySelector('#app');

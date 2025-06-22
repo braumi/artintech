@@ -467,27 +467,33 @@ export class Router {
                     </div>
                   </div>
                   
-                  <!-- Material Suggestions (appears at bottom when clicked) -->
+                  <!-- Material Suggestions (appears below model controls when clicked) -->
                   <div class="material-suggestions" id="material-suggestions" style="display: none;">
-                    <div class="suggestion-box" data-suggestion="gorgia-green" title="Gorgia - Green" data-tooltip="Gorgia - Green • 34.50₾">
-                      <img src="./suggestions/03915_-_roof_jpg.webp" alt="Gorgia Green" />
-                      <div class="popup-element">
-                        <div>Gorgia - Green</div>
-                        <div>34.50₾</div>
-                      </div>
+                    <div class="suggestions-header">
+                      <h4>Material Options</h4>
+                      <p>Select a roofing material to see how it looks on your house</p>
                     </div>
-                    <div class="suggestion-box" data-suggestion="gorgia-red" title="Gorgia - Red" data-tooltip="Gorgia - Red • 31.50₾">
-                      <img src="./suggestions/03914_-_roof_jpg.webp" alt="Gorgia Red" />
-                      <div class="popup-element">
-                        <div>Gorgia - Red</div>
-                        <div>31.50₾</div>
+                    <div class="suggestions-grid">
+                      <div class="suggestion-box" data-suggestion="gorgia-green" title="Gorgia - Green" data-tooltip="Gorgia - Green • 34.50₾">
+                        <img src="./suggestions/03915_-_roof_jpg.webp" alt="Gorgia Green" />
+                        <div class="popup-element">
+                          <div>Gorgia - Green</div>
+                          <div>34.50₾</div>
+                        </div>
                       </div>
-                    </div>
-                    <div class="suggestion-box" data-suggestion="mihouse-orange" title="MiHouse - Orange" data-tooltip="MiHouse - Orange • 37.95₾">
-                      <img src="./suggestions/BM-00038609_-_roof_jpg.webp" alt="MiHouse Orange" />
-                      <div class="popup-element">
-                        <div>MiHouse - Orange</div>
-                        <div>37.95₾</div>
+                      <div class="suggestion-box" data-suggestion="gorgia-red" title="Gorgia - Red" data-tooltip="Gorgia - Red • 31.50₾">
+                        <img src="./suggestions/03914_-_roof_jpg.webp" alt="Gorgia Red" />
+                        <div class="popup-element">
+                          <div>Gorgia - Red</div>
+                          <div>31.50₾</div>
+                        </div>
+                      </div>
+                      <div class="suggestion-box" data-suggestion="mihouse-orange" title="MiHouse - Orange" data-tooltip="MiHouse - Orange • 37.95₾">
+                        <img src="./suggestions/BM-00038609_-_roof_jpg.webp" alt="MiHouse Orange" />
+                        <div class="popup-element">
+                          <div>MiHouse - Orange</div>
+                          <div>37.95₾</div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1042,7 +1048,7 @@ export class Router {
       messagesContainer.scrollTop = messagesContainer.scrollHeight;
       
       // Start word-by-word typing
-      this.typeMessageWordByWord(message, messageId, messagesContainer);
+      this.typeMessageWordByWord(message, messageId, messagesContainer as HTMLElement);
     }, 800);
   }
 
@@ -1460,7 +1466,7 @@ export class Router {
         }
         
         // Add AI message about showing suggestions
-        this.addAIMessage("Perfect! I've displayed material options at the bottom. Click on any material to apply it to your roof.");
+        this.addAIMessage("Perfect! I've displayed material options below the 3D viewer. Click on any material to apply it to your roof and see the transformation!");
       };
       
       getSuggestionsBtn.addEventListener('click', suggestionsClickHandler);
