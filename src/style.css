@@ -79,7 +79,7 @@ p {
   justify-content: center;
   align-items: center;
   position: relative;
-  z-index: 10;
+  z-index: 100;
   gap: 0;
   margin-bottom: 0.5rem;
   padding: 0.5rem 0;
@@ -185,6 +185,7 @@ p {
   padding: 8px;
   border: none;
   border-radius: 10px;
+  z-index: 100;
   background: transparent;
   cursor: pointer;
   flex-direction: column;
@@ -225,6 +226,7 @@ p {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  z-index: 99;
   z-index: 100;
   opacity: 0;
   transition: opacity 0.3s ease;
@@ -314,7 +316,8 @@ p {
     box-sizing: border-box;
   }
   body.main-background,
-  body.demo-background {
+  body.demo-background,
+  body.auth-background {
     background-image: none !important;
     background-color: #f5f5f5;
   }
@@ -519,6 +522,15 @@ body.demo-background {
   margin: 0;
   min-height: 100vh;
   background-image: url('../components/hero components/demo_background.png');
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+}
+
+body.auth-background {
+  margin: 0;
+  min-height: 100vh;
+  background-image: url('../components/hero components/signin_background.png');
   background-size: cover;
   background-position: center center;
   background-repeat: no-repeat;

@@ -345,12 +345,18 @@ export class Router {
     this.appElement.innerHTML = this.getPageContent();
     this.attachEventListeners();
     this.initMouseFollower();
+    
+    // Remove all background classes first
+    document.body.classList.remove('main-background', 'demo-background', 'auth-background');
+    
+    // Apply the appropriate background class
     if (this.currentPage === 'main') {
       document.body.classList.add('main-background');
-      document.body.classList.remove('demo-background');
       this.initHeroAnimation();
+    } else if (this.currentPage === 'signin' || this.currentPage === 'signup') {
+      document.body.classList.add('auth-background');
     } else {
-      document.body.classList.remove('main-background');
+      // demo, checkout, profile pages use demo-background
       document.body.classList.add('demo-background');
     }
   }
