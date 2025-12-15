@@ -1,0 +1,51 @@
+# Bed materials – color‑only, no textures
+
+newmtl BedDuvet
+Ns 50.0
+Ka 1.0 1.0 1.0
+Kd 0.85 0.85 0.88      # light grey duvet
+Ks 0.1 0.1 0.1
+Ke 0.0 0.0 0.0
+Ni 1.45
+d 1.0
+illum 2
+
+newmtl BedGray
+Ns 40.0
+Ka 1.0 1.0 1.0
+Kd 0.65 0.65 0.68      # mid grey mattress / headboard
+Ks 0.1 0.1 0.1
+Ke 0.0 0.0 0.0
+Ni 1.45
+d 1.0
+illum 2
+
+newmtl BedPillowGray
+Ns 40.0
+Ka 1.0 1.0 1.0
+Kd 0.6 0.6 0.6
+Ks 0.1 0.1 0.1
+Ke 0.0 0.0 0.0
+Ni 1.45
+d 1.0
+illum 2
+
+newmtl BedPillowWhite
+Ns 40.0
+Ka 1.0 1.0 1.0
+Kd 0.95 0.95 0.95      # almost white pillows
+Ks 0.05 0.05 0.05
+Ke 0.0 0.0 0.0
+Ni 1.45
+d 1.0
+illum 2
+
+newmtl BedPlastic
+Ns 80.0
+Ka 1.0 1.0 1.0
+Kd 0.2 0.2 0.22        # dark grey legs/base
+Ks 0.3 0.3 0.3
+Ke 0.0 0.0 0.0
+Ni 1.45
+d 1.0
+illum 2

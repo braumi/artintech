@@ -1,20 +1,289 @@
-export type PageName = 'main' | 'demo';
+import type {
+  DemoFurnitureId,
+  FurnitureInteractionState,
+  FurnitureSnapshot,
+  ThreeApartmentViewer
+} from './three-viewer';
+import { supabase } from './supabaseClient';
+
+export type PageName = 'main' | 'demo' | 'signin' | 'signup' | 'checkout' | 'profile';
+
+type DemoPlanStats = {
+  area: number;
+  beds: number;
+  baths: number;
+  levels?: number;
+};
+
+type DemoPlanConfig = {
+  id: string;
+  name: string;
+  description: string;
+  stats: DemoPlanStats;
+  highlights: string[];
+  plan: any;
+  staticModelBase?: string;
+};
+
+type DemoFurnitureOption = {
+  id: DemoFurnitureId;
+  name: string;
+  price: string;
+  icon: string; // filename in components/icons
+};
 
 export class Router {
   private currentPage: PageName = 'main';
   private appElement: HTMLElement;
   private roofActionListener: ((e: Event) => void) | null = null;
+  private threeViewer: ThreeApartmentViewer | null = null;
+  private currentPlan: any | null = null;
+  private currentPlanId: string | null = null;
+  private readonly demoPlans: DemoPlanConfig[] = this.createDemoPlans();
+  private readonly demoFurnitureOptions: DemoFurnitureOption[] = this.createDemoFurnitureOptions();
+  private activeFurniture: DemoFurnitureId | null = null;
+  private furnitureSnapshots: FurnitureSnapshot[] = [];
+  private selectedFurnitureInstanceId: string | null = null;
+  private furnitureInteractionState: FurnitureInteractionState = 'idle';
+  private furnitureColorByInstance: Map<string, string> = new Map();
+  private heroGradientAnimationId: number | null = null;
+  private currentUserId: string | null = null;
+  private currentUserName: string | null = null;
+  private removeAuthListener: (() => void) | null = null;
+  private escKeyHandler: ((event: KeyboardEvent) => void) | null = null;
+  private logoutControllers: AbortController[] = [];
+  private logoutDocHandler: ((event: Event) => void) | null = null;
 
   constructor(appElement: HTMLElement) {
     this.appElement = appElement;
     this.init();
   }
 
+  private registerGlobalLogout(): void {
+    if (this.logoutDocHandler) {
+      document.removeEventListener('click', this.logoutDocHandler, true);
+      this.logoutDocHandler = null;
+    }
+    this.logoutDocHandler = (event: Event) => {
+      const target = event.target as HTMLElement | null;
+      const btn = target?.closest('.auth-logout-btn') as HTMLButtonElement | null;
+      if (!btn) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void this.handleLogout(btn);
+    };
+    document.addEventListener('click', this.logoutDocHandler, true);
+  }
+
+  private createDemoPlans(): DemoPlanConfig[] {
+    return [
+      {
+        id: 'great-room-loft',
+        name: 'Great Room Loft',
+        description: 'Sun-filled loft with a 30 m2 great room at the heart and private bedroom wing.',
+        stats: { area: 90, beds: 2, baths: 2 },
+        highlights: ['Split-bedroom layout', 'Dedicated study nook', 'Gallery-style entry'],
+        staticModelBase: 'house',
+        plan: {
+          units: 'meters',
+          ceilingHeightMeters: 3.0,
+          defaultWallThicknessMeters: 0.18,
+          rooms: [
+            { name: 'Great Room', floorMaterial: 'wood', polygon: [[0, 0], [6, 0], [6, 5], [0, 5]] },
+            { name: 'Kitchen', floorMaterial: 'tile', polygon: [[6, 0], [10, 0], [10, 3], [6, 3]] },
+            { name: 'Owner Suite', floorMaterial: 'wood', polygon: [[6, 3], [10, 3], [10, 7], [6, 7]] },
+            { name: 'Study Nook', polygon: [[0, 5], [6, 5], [6, 7.5], [0, 7.5]] },
+            { name: 'Gallery', polygon: [[0, 7.5], [6, 7.5], [6, 9], [0, 9]] },
+            { name: 'Bath', floorMaterial: 'tile', polygon: [[6, 7], [8, 7], [8, 9], [6, 9]] },
+            { name: 'Laundry', floorMaterial: 'tile', polygon: [[8, 7], [10, 7], [10, 9], [8, 9]] }
+          ]
+        }
+      },
+      {
+        id: 'courtyard-ranch',
+        name: 'Courtyard Ranch',
+        description: 'Single-story ranch anchored by an outdoor courtyard and studio wing.',
+        stats: { area: 124, beds: 3, baths: 2 },
+        highlights: ['Central courtyard retreat', 'Dedicated studio wing', 'Oversized kitchen island'],
+        staticModelBase: 'house2',
+        plan: {
+          units: 'meters',
+          ceilingHeightMeters: 2.8,
+          defaultWallThicknessMeters: 0.18,
+          rooms: [
+            { name: 'Living Pavilion', floorMaterial: 'wood', polygon: [[0, 0], [7, 0], [7, 4], [0, 4]] },
+            { name: 'Dining Hall', floorMaterial: 'wood', polygon: [[7, 0], [12, 0], [12, 4], [7, 4]] },
+            { name: 'Kitchen', floorMaterial: 'tile', polygon: [[7, 4], [12, 4], [12, 6.5], [7, 6.5]] },
+            { name: 'Courtyard', floorMaterial: 'tile', polygon: [[4, 4], [8, 4], [8, 7], [4, 7]] },
+            { name: 'Bedroom Wing', floorMaterial: 'wood', polygon: [[0, 4], [4, 4], [4, 11], [0, 11]] },
+            { name: 'Studio', floorMaterial: 'wood', polygon: [[4, 7], [8, 7], [8, 11], [4, 11]] },
+            { name: 'Bath Suite', floorMaterial: 'tile', polygon: [[8, 7], [10.5, 7], [10.5, 9.5], [8, 9.5]] },
+            { name: 'Garage', floorMaterial: 'concrete', polygon: [[10.5, 7], [12, 7], [12, 11], [10.5, 11]] }
+          ]
+        }
+      },
+      {
+        id: 'urban-duplex',
+        name: 'Urban Duplex',
+        description: 'Compact urban plan with dual bedrooms and a flexible studio terrace.',
+        stats: { area: 102, beds: 3, baths: 2 },
+        highlights: ['Flexible studio space', 'Terrace spanning rear facade', 'Efficient galley kitchen'],
+        staticModelBase: 'house3',
+        plan: {
+          units: 'meters',
+          ceilingHeightMeters: 2.9,
+          defaultWallThicknessMeters: 0.16,
+          rooms: [
+            { name: 'Living Lounge', floorMaterial: 'wood', polygon: [[0, 0], [6, 0], [6, 4], [0, 4]] },
+            { name: 'Galley Kitchen', floorMaterial: 'tile', polygon: [[6, 0], [11, 0], [11, 3], [6, 3]] },
+            { name: 'Flex Studio', floorMaterial: 'wood', polygon: [[0, 4], [4, 4], [4, 8], [0, 8]] },
+            { name: 'Bedroom One', floorMaterial: 'wood', polygon: [[4, 4], [7.5, 4], [7.5, 8], [4, 8]] },
+            { name: 'Bedroom Two', floorMaterial: 'wood', polygon: [[7.5, 4], [11, 4], [11, 7], [7.5, 7]] },
+            { name: 'Bath Core', floorMaterial: 'tile', polygon: [[7.5, 7], [11, 7], [11, 8.5], [7.5, 8.5]] },
+            { name: 'Terrace', polygon: [[0, 8], [11, 8], [11, 9.5], [0, 9.5]] }
+          ]
+        }
+      }
+    ];
+  }
+
+  private createDemoFurnitureOptions(): DemoFurnitureOption[] {
+    return [
+      {
+        id: 'sofa',
+        name: 'Modular Sofa',
+        price: '₾1,200',
+        icon: 'couch.png',
+      },
+      {
+        id: 'dining',
+        name: 'Dining Table',
+        price: '₾950',
+        icon: 'table.png',
+      },
+      {
+        id: 'bed',
+        name: 'Queen Bed',
+        price: '₾1,050',
+        icon: 'bed.png',
+      },
+      {
+        id: 'chair',
+        name: 'Accent Chair',
+        price: '₾320',
+        icon: 'chair.png',
+      },
+      {
+        id: 'coffee-table',
+        name: 'Coffee Table',
+        price: '₾420',
+        icon: 'coffee table.png',
+      },
+      {
+        id: 'plant',
+        name: 'Leaf Plant',
+        price: '₾180',
+        icon: 'plant.png',
+      }
+    ];
+  }
+
+  private formatPlanMeta(stats: DemoPlanStats): string {
+    const parts = [`${stats.beds} bd`, `${stats.baths} ba`, `${stats.area} m2`];
+    if (stats.levels) {
+      parts.push(`${stats.levels} lvl`);
+    }
+    return parts.join(' | ');
+  }
+
+  private getFurnitureOption(id: DemoFurnitureId | null): DemoFurnitureOption | undefined {
+    if (!id) return undefined;
+    return this.demoFurnitureOptions.find(item => item.id === id);
+  }
+
+  private updateActivePlanSummary(plan: DemoPlanConfig | null): void {
+    const nameEl = this.appElement.querySelector('#active-plan-name') as HTMLElement | null;
+    const metaEl = this.appElement.querySelector('#active-plan-meta') as HTMLElement | null;
+    const descEl = this.appElement.querySelector('#active-plan-description') as HTMLElement | null;
+    if (!plan) {
+      if (nameEl) nameEl.textContent = 'Select a plan';
+      if (metaEl) metaEl.textContent = 'No plan selected';
+      if (descEl) descEl.textContent = 'Pick a floor plan to generate the 3D model.';
+      return;
+    }
+    if (nameEl) nameEl.textContent = plan.name;
+    if (metaEl) metaEl.textContent = this.formatPlanMeta(plan.stats);
+    if (descEl) descEl.textContent = plan.description;
+  }
+
+  private updateFurnitureStatus(option: DemoFurnitureOption | null): void {
+    const label = this.appElement.querySelector('#selected-furniture-label') as HTMLElement | null;
+    if (!label) return;
+    label.textContent = option ? `${option.name} - ${option.footprint}` : 'None';
+  }
+
+  private async ensureThreeViewer(container: HTMLElement): Promise<ThreeApartmentViewer | null> {
+    if (this.threeViewer) {
+      return this.threeViewer;
+    }
+    const module = await import('./three-viewer');
+    const ViewerCtor = module.ThreeApartmentViewer;
+    const host = document.createElement('div');
+    host.className = 'three-host';
+    host.style.position = 'absolute';
+    host.style.inset = '0';
+    container.appendChild(host);
+    this.threeViewer = new ViewerCtor();
+    this.threeViewer.mount(host);
+    return this.threeViewer;
+  }
+
+  /**
+   * If we just returned from an OAuth provider (e.g. Google), Supabase puts a
+   * `code` query param in the URL. We must exchange that code for a session
+   * before we can read the current user; otherwise the app will think we're
+   * signed out and prompt again.
+   */
+  private async handleOAuthCallback(): Promise<void> {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const oauthError = params.get('error_description');
+
+    if (oauthError) {
+      // eslint-disable-next-line no-console
+      console.warn('OAuth error from provider:', oauthError);
+      return;
+    }
+
+    if (!code) return;
+
+    try {
+      await supabase.auth.exchangeCodeForSession(code);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('Failed to exchange OAuth code for session', err);
+      return;
+    }
+
+    // Clean the URL (remove ?code=...) but keep the current hash route
+    const hash = window.location.hash || '#main';
+    const cleanUrl = `${window.location.origin}${window.location.pathname}${hash}`;
+    window.history.replaceState({}, '', cleanUrl);
+
+    // Update auth state after exchanging the session
+    await this.refreshAuthState();
+  }
+
   private init(): void {
+    // First, handle potential OAuth redirect responses (e.g., Google)
+    void this.handleOAuthCallback();
+    this.registerAuthListener();
+    this.registerGlobalLogout();
+
     // Handle initial page load
     const hash = window.location.hash.slice(1) as PageName;
-    if (hash === 'demo') {
-      this.currentPage = 'demo';
+    if (hash === 'demo' || hash === 'signin' || hash === 'signup' || hash === 'checkout' || hash === 'profile') {
+      this.currentPage = hash;
     }
 
     // Listen for hash changes
@@ -23,11 +292,44 @@ export class Router {
     });
 
     this.render();
+    void this.refreshAuthState();
+  }
+
+  /**
+   * Keep UI in sync whenever Supabase auth changes (including Google OAuth).
+   */
+  private registerAuthListener(): void {
+    // Clean up any previous listener to avoid duplicates during HMR or re-init
+    if (this.removeAuthListener) {
+      this.removeAuthListener();
+      this.removeAuthListener = null;
+    }
+
+    const { data: listener } = supabase.auth.onAuthStateChange(async (event) => {
+      // Whenever session changes, refresh state and UI
+      await this.refreshAuthState();
+
+      // On successful sign-in, leave auth pages immediately
+      if (event === 'SIGNED_IN' && (this.currentPage === 'signin' || this.currentPage === 'signup')) {
+        this.currentPage = 'main';
+        window.location.hash = 'main';
+        this.render();
+      }
+    });
+
+    if (listener && typeof listener.subscription?.unsubscribe === 'function') {
+      this.removeAuthListener = () => listener.subscription.unsubscribe();
+    }
   }
 
   private handleRouteChange(): void {
-    const hash = window.location.hash.slice(1) as PageName;
-    this.navigateTo(hash || 'main');
+    const hash = (window.location.hash.slice(1) as PageName) || 'main';
+    // Avoid double-render when navigateTo already updated currentPage and hash
+    if (hash === this.currentPage) {
+      return;
+    }
+    this.currentPage = hash;
+    this.render();
   }
 
   public navigateTo(page: PageName): void {
@@ -43,6 +345,14 @@ export class Router {
     this.appElement.innerHTML = this.getPageContent();
     this.attachEventListeners();
     this.initMouseFollower();
+    if (this.currentPage === 'main') {
+      document.body.classList.add('main-background');
+      document.body.classList.remove('demo-background');
+      this.initHeroAnimation();
+    } else {
+      document.body.classList.remove('main-background');
+      document.body.classList.add('demo-background');
+    }
   }
 
   private cleanupEventListeners(): void {
@@ -51,23 +361,103 @@ export class Router {
       document.removeEventListener('click', this.roofActionListener);
       this.roofActionListener = null;
     }
+    if (this.threeViewer) {
+      this.threeViewer.dispose();
+      this.threeViewer = null;
+    }
+    if (this.heroGradientAnimationId !== null) {
+      window.cancelAnimationFrame(this.heroGradientAnimationId);
+      this.heroGradientAnimationId = null;
+    }
+    if (this.escKeyHandler) {
+      window.removeEventListener('keydown', this.escKeyHandler);
+      this.escKeyHandler = null;
+    }
+    if (this.logoutDocHandler) {
+      document.removeEventListener('click', this.logoutDocHandler, true);
+      this.logoutDocHandler = null;
+    }
+    // Abort any logout listeners registered with AbortController
+    this.logoutControllers.forEach(c => c.abort());
+    this.logoutControllers = [];
+    this.activeFurniture = null;
+  }
+
+  private initHeroAnimation(): void {
+    const hero = this.appElement.querySelector<HTMLElement>('.hero-animate');
+    if (!hero) return;
+
+    // Small delay before triggering the side-switch animation
+    window.setTimeout(() => {
+      hero.classList.add('hero-animate--swapped');
+    }, 500);
+
+    // Ensure any previous gradient animation is stopped
+    if (this.heroGradientAnimationId !== null) {
+      window.cancelAnimationFrame(this.heroGradientAnimationId);
+      this.heroGradientAnimationId = null;
+    }
+
+    // Reset gradient angle to a static 10deg
+    hero.style.setProperty('--hero-gradient-angle', '10deg');
   }
 
   private getPageContent(): string {
+    const isSignedIn = !!this.currentUserId;
+    const authLabel = isSignedIn && this.currentUserName
+      ? `Hello, ${this.currentUserName}`
+      : 'Sign in';
+    const authTargetPage: PageName = isSignedIn ? 'profile' : 'signin';
+
     const navigation = `
       <nav class="navigation">
-        <button class="nav-btn ${this.currentPage === 'main' ? 'active' : ''}" data-page="main">
-          Main
+        <div class="navigation-tabs">
+          <button class="nav-btn ${this.currentPage === 'main' ? 'active' : ''}" data-page="main">
+            Main
+          </button>
+          <button class="nav-btn ${this.currentPage === 'demo' ? 'active' : ''}" data-page="demo">
+            Demo
+          </button>
+        </div>
+        <button class="nav-signin" data-page="${authTargetPage}">${authLabel}</button>
+        <button class="nav-burger" aria-label="Open menu">
+          <span></span>
+          <span></span>
+          <span></span>
         </button>
-        <button class="nav-btn ${this.currentPage === 'demo' ? 'active' : ''}" data-page="demo">
-          Demo
-        </button>
+        <div class="nav-drawer" aria-hidden="true">
+          <button class="nav-drawer__item" data-page="main">Main</button>
+          <button class="nav-drawer__item" data-page="demo">Demo</button>
+          <button class="nav-drawer__item" data-page="${authTargetPage}">${authLabel}</button>
+        </div>
       </nav>
     `;
 
     const mouseFollower = `<div class="mouse-follower"></div>`;
 
-    const pageContent = this.currentPage === 'main' ? this.getMainPageContent() : this.getDemoPageContent();
+    let pageContent: string;
+    switch (this.currentPage) {
+      case 'main':
+        pageContent = this.getMainPageContent();
+        break;
+      case 'demo':
+        pageContent = this.getDemoPageContent();
+        break;
+      case 'signin':
+        pageContent = this.getSignInPageContent();
+        break;
+      case 'signup':
+        pageContent = this.getSignUpPageContent();
+        break;
+      case 'checkout':
+        pageContent = this.getCheckoutPageContent();
+        break;
+      case 'profile':
+        pageContent = this.getProfilePageContent();
+        break;
+      default:
+        pageContent = this.getMainPageContent();
+    }
 
     return navigation + pageContent + mouseFollower;
   }
@@ -75,430 +465,473 @@ export class Router {
   private getMainPageContent(): string {
     return `
       <div class="page main-page">
-        <!-- Hero Section -->
-        <div class="hero-section">
-          <div class="hero-container">
-            <div class="hero-content">
-              <div class="hero-badge">
-                <span class="badge-text">AI-Powered Architecture</span>
+        <main class="landing">
+          <div class="landing-shell">
+            <header class="landing-header">
+              <div class="landing-kicker">
+                <span class="landing-kicker__label">ARTINTECH GROUP</span>
+                <span class="landing-kicker__meta">Spatial AI studio</span>
               </div>
-              <h1 class="main-title">
-                Transform Words Into 
-                <span class="gradient-text">Living Spaces</span>
+              <h1 class="landing-title">
+                Turn your blueprints<br />
+                into 3D living Space
               </h1>
-              <p class="hero-description">
-                Experience the future of home design where natural language becomes breathtaking 3D visualizations. 
-                Simply describe your dream home and watch it come to life in photorealistic detail.
+              <p class="landing-lead">
+                Upload the quiet lines of your floor plan and watch them open into living space.
+                ArtInTech lets you walk through tomorrow’s rooms today, rearrange walls with a click,
+                and try on furniture, light, and layout until your house feels exactly like home.
               </p>
-              <div class="hero-actions">
-                <button class="cta-primary" data-page="demo">
-                  <span>Try AI Visualization</span>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="m9 18 6-6-6-6"/>
-                  </svg>
-                </button>
-                <button class="cta-secondary">
-                  <span>Try Demo</span>
-                </button>
-              </div>
-            </div>
-            <div class="hero-visual">
-              <div class="visual-container">
-                <div class="visual-card">
-                  <div class="card-header">
-                    <div class="status-dot"></div>
-                    <span>AI Rendering</span>
-                  </div>
-                  <div class="card-content">
-                    <img src="./components/thumbnail_6950664e-aee0-43b5-87f4-069639245d54.png.2048x2048_q85.png.webp" alt="AI Generated House" class="preview-image" />
-                    <div class="generation-info">
-                      <span>Generated in 2.1s</span>
-                    </div>
-                  </div>
-                </div>
-                <div class="floating-prompts">
-                  <div class="prompt-bubble">
-                    <span>"Modern home with glass walls"</span>
-                  </div>
-                  <div class="prompt-bubble">
-                    <span>"Minimalist design with clean lines"</span>
-                  </div>
-                </div>
-              </div>
-            </div>
+            </header>
           </div>
-        </div>
 
-        <!-- Features Section -->
-        <div class="features-section">
-          <div class="section-header">
-            <h2 class="section-title">How It Works</h2>
-            <p class="section-subtitle">Three simple steps to visualize your dream home</p>
-          </div>
-          
-          <div class="features-grid">
-            <div class="feature-card">
-              <div class="feature-icon">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                </svg>
-              </div>
-              <h3 class="feature-title">Describe Your Vision</h3>
-              <p class="feature-description">
-                Use natural language to describe your ideal home. Our AI understands architectural concepts, 
-                materials, and design preferences.
-              </p>
-            </div>
-            
-            <div class="feature-card">
-              <div class="feature-icon">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-                </svg>
-              </div>
-              <h3 class="feature-title">AI Generation</h3>
-              <p class="feature-description">
-                Advanced neural networks process your description and generate photorealistic 
-                3D models in seconds, not hours.
-              </p>
-            </div>
-            
-            <div class="feature-card">
-              <div class="feature-icon">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-                  <line x1="8" y1="21" x2="16" y2="21"/>
-                  <line x1="12" y1="17" x2="12" y2="21"/>
-                </svg>
-              </div>
-              <h3 class="feature-title">Interactive Exploration</h3>
-              <p class="feature-description">
-                Explore your generated home from every angle. Select elements for detailed 
-                analysis and collaborate with professionals.
-              </p>
-            </div>
-          </div>
-        </div>
+          <section class="landing-hero-fixed">
+            <img
+              src="./components/hero components/hero_background.png"
+              alt="Modern custom home with pool"
+            />
+          </section>
+        </main>
+      </div>
+    `;
+  }
 
-        <!-- Benefits Section -->
-        <div class="benefits-section">
-          <div class="benefits-container">
-            <div class="benefits-content">
-              <h2 class="benefits-title">Why Choose AI Visualization?</h2>
-              <div class="benefits-list">
-                <div class="benefit-item">
-                  <div class="benefit-icon">⚫</div>
-                  <div class="benefit-text">
-                    <h4>Instant Results</h4>
-                    <p>Get photorealistic visualizations in seconds, not weeks</p>
-                  </div>
+  private getSignInPageContent(): string {
+    return `
+      <div class="page auth-page">
+        <section class="auth-hero-fixed">
+          <img
+            src="./components/hero components/signin_background.png"
+            alt="Architectural sketch background"
+          />
+        </section>
+        <main class="auth-shell">
+          <section class="auth-card">
+            <h1 class="auth-title">Sign in</h1>
+            <p class="auth-subtitle">
+              Pick up where you left off, and keep shaping the rooms you\u2019re dreaming of.
+            </p>
+            <form class="auth-form" novalidate>
+              <label class="auth-field">
+                <span>Email</span>
+                <input type="email" placeholder="you@example.com" />
+              </label>
+              <label class="auth-field">
+                <span>Password</span>
+                <div class="auth-password">
+                  <input type="password" placeholder="••••••••" />
+                  <button
+                    type="button"
+                    class="auth-password-toggle"
+                    aria-label="Show password"
+                  >
+                    <svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <path
+                        d="M12 5C7 5 3.1 8.1 2 12c1.1 3.9 5 7 10 7s8.9-3.1 10-7c-1.1-3.9-5-7-10-7z"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      />
+                      <circle cx="12" cy="12" r="2" fill="currentColor" />
+                    </svg>
+                  </button>
                 </div>
-                <div class="benefit-item">
-                  <div class="benefit-icon">⚪</div>
-                  <div class="benefit-text">
-                    <h4>Cost Effective</h4>
-                    <p>Save thousands on traditional architectural renderings</p>
-                  </div>
-                </div>
-                <div class="benefit-item">
-                  <div class="benefit-icon">⚫</div>
-                  <div class="benefit-text">
-                    <h4>Precise Communication</h4>
-                    <p>Share exact visions with contractors and stakeholders</p>
-                  </div>
-                </div>
-                <div class="benefit-item">
-                  <div class="benefit-icon">⚪</div>
-                  <div class="benefit-text">
-                    <h4>Unlimited Iterations</h4>
-                    <p>Explore countless design variations effortlessly</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="benefits-visual">
-              <div class="stats-grid">
-                <div class="stat-card">
-                  <span class="stat-number">10k+</span>
-                  <span class="stat-label">Homes Visualized</span>
-                </div>
-                <div class="stat-card">
-                  <span class="stat-number">2.1s</span>
-                  <span class="stat-label">Average Generation</span>
-                </div>
-                <div class="stat-card">
-                  <span class="stat-number">95%</span>
-                  <span class="stat-label">Client Satisfaction</span>
-                </div>
-                <div class="stat-card">
-                  <span class="stat-number">24/7</span>
-                  <span class="stat-label">AI Availability</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- CTA Section -->
-        <div class="cta-section">
-          <div class="cta-container">
-            <div class="cta-content">
-              <h2 class="cta-title">Ready to See Your Dream Home?</h2>
-              <p class="cta-description">
-                Join thousands of homeowners and architects who've transformed their visions into reality
-              </p>
-              <button class="cta-button" data-page="demo">
-                <span>Start Visualizing Now</span>
-                <div class="button-shine"></div>
+              </label>
+              <p class="auth-error" id="auth-error" aria-live="polite"></p>
+              <button type="submit" class="auth-primary-btn">Continue</button>
+              <button type="button" class="auth-secondary-btn" data-page="signup">
+                Create a new account
               </button>
+            </form>
+            <div class="auth-divider">
+              <span>or</span>
             </div>
-          </div>
+            <button type="button" class="auth-google-btn">
+              <span class="auth-google-icon"></span>
+              <span>Continue with Google</span>
+            </button>
+          </section>
+        </main>
+      </div>
+    `;
+  }
+
+  private getSignUpPageContent(): string {
+    return `
+      <div class="page auth-page">
+        <section class="auth-hero-fixed">
+          <img
+            src="./components/hero components/signin_background.png"
+            alt="Architectural sketch background"
+          />
+        </section>
+        <main class="auth-shell">
+          <section class="auth-card">
+            <h1 class="auth-title">Create your account</h1>
+            <p class="auth-subtitle">
+              Save floor plans, revisit layouts, and collect furniture ideas in one quiet place.
+            </p>
+            <form class="auth-form">
+              <label class="auth-field">
+                <span>Full name</span>
+                <input type="text" placeholder="Name and surname" />
+              </label>
+              <label class="auth-field">
+                <span>Email</span>
+                <input type="email" placeholder="you@example.com" />
+              </label>
+              <label class="auth-field">
+                <span>Password</span>
+                <div class="auth-password">
+                  <input type="password" placeholder="Create a password" />
+                  <button
+                    type="button"
+                    class="auth-password-toggle"
+                    aria-label="Show password"
+                  >
+                    <svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <path
+                        d="M12 5C7 5 3.1 8.1 2 12c1.1 3.9 5 7 10 7s8.9-3.1 10-7c-1.1-3.9-5-7-10-7z"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      />
+                      <circle cx="12" cy="12" r="2" fill="currentColor" />
+                    </svg>
+                  </button>
+                </div>
+              </label>
+              <button type="submit" class="auth-primary-btn">Sign up</button>
+              <button type="button" class="auth-secondary-btn" data-page="signin">
+                Already have an account? Sign in
+              </button>
+            </form>
+          </section>
+        </main>
+      </div>
+    `;
+  }
+
+  private getCheckoutPageContent(): string {
+    const hasItems = this.furnitureSnapshots.length > 0;
+
+    const emptyState = `
+      <div class="checkout-empty">
+        <p>No furniture placed yet.</p>
+        <button type="button" class="auth-secondary-btn" data-page="demo">Back to demo</button>
+      </div>
+    `;
+
+    const listSkeleton = `
+      <div class="checkout-items-list" id="checkout-items-list">
+        ${hasItems ? '' : emptyState}
+      </div>
+    `;
+
+    const summary = `
+      <div class="checkout-totals">
+        <div class="checkout-totals__row checkout-totals__row--subtotal">
+          <span class="checkout-totals__op">&nbsp;</span>
+          <span>Subtotal</span>
+          <span id="checkout-subtotal">₾0</span>
         </div>
+        <div class="checkout-totals__row checkout-totals__row--tax">
+          <span class="checkout-totals__op">+</span>
+          <span>Tax (18%)</span>
+          <span id="checkout-tax">₾0</span>
+        </div>
+        <div class="checkout-totals__row checkout-totals__row--total">
+          <span class="checkout-totals__op">=</span>
+          <span>Total</span>
+          <span id="checkout-total">₾0</span>
+        </div>
+        <div class="checkout-actions">
+          <button type="button" class="auth-secondary-btn" data-page="demo">
+            Back to demo
+          </button>
+          <button type="button" class="auth-primary-btn">
+            Place order
+          </button>
+        </div>
+      </div>
+    `;
+
+    return `
+      <div class="page checkout-page">
+        <section class="demo-hero-fixed">
+          <img
+            src="./components/hero components/demo_background.png"
+            alt="Forest and mountains background"
+          />
+        </section>
+        <main class="checkout-shell">
+          <section class="checkout-layout">
+            <div class="checkout-card checkout-panel">
+              <h1 class="checkout-title">Checkout</h1>
+              <p class="checkout-subtitle">
+                Every piece you placed is listed here. Adjust in the demo anytime.
+              </p>
+              ${listSkeleton}
+            </div>
+            <div class="checkout-card checkout-panel checkout-summary-card">
+              <h2 class="checkout-title">Summary</h2>
+              <p class="checkout-subtitle">Totals based on your placed furniture.</p>
+              ${summary}
+            </div>
+          </section>
+        </main>
+      </div>
+    `;
+  }
+
+  private getProfilePageContent(): string {
+    const name = this.currentUserName ?? 'there';
+    return `
+      <div class="page auth-page profile-page">
+        <section class="auth-hero-fixed">
+          <img
+            src="./components/hero components/signin_background.png"
+            alt="Architectural sketch background"
+          />
+        </section>
+        <main class="profile-shell">
+          <div class="profile-container">
+            <header class="profile-header">
+              <div class="profile-welcome">
+                <h1 class="profile-title">Welcome back, ${name}</h1>
+                <p class="profile-subtitle">Manage your account and subscription</p>
+              </div>
+              <div class="profile-header-actions">
+                <button type="button" class="profile-action-btn" data-page="checkout">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 2H4a2 2 0 0 0-2 2v5m0 9v3a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-3M3 10h18M7 15h3"/>
+                  </svg>
+                  Checkout
+                </button>
+                <button type="button" class="profile-action-btn auth-logout-btn">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
+                  </svg>
+                  Log out
+                </button>
+              </div>
+            </header>
+
+            <section class="profile-section profile-plans-section">
+              <div class="profile-plans-header">
+                <h2 class="profile-section-title">Choose Your Plan</h2>
+                <p class="profile-plans-note">Upgrade to Premium to upload blueprints and generate AI house models</p>
+              </div>
+              <div class="profile-plans-grid">
+                <div class="profile-plan-card">
+                  <div class="profile-plan-badge">Current</div>
+                  <h3 class="profile-plan-name">Free</h3>
+                  <div class="profile-plan-price">₾0</div>
+                  <p class="profile-plan-description">Explore the demo and basic furniture placement</p>
+                  <ul class="profile-plan-features">
+                    <li>3D demo viewer</li>
+                    <li>Furniture placement</li>
+                    <li>Sample floor plans</li>
+                  </ul>
+                </div>
+
+                <div class="profile-plan-card profile-plan-card-premium">
+                  <div class="profile-plan-badge profile-plan-badge-premium">Popular</div>
+                  <h3 class="profile-plan-name">Premium</h3>
+                  <div class="profile-plan-price">
+                    ₾10
+                    <span class="profile-plan-uses">5 uses</span>
+                  </div>
+                  <p class="profile-plan-description">Upload blueprints and generate AI models</p>
+                  <ul class="profile-plan-features">
+                    <li>Everything in Free</li>
+                    <li>Blueprint uploads</li>
+                    <li>5 AI generations</li>
+                    <li>Priority support</li>
+                  </ul>
+                  <button class="profile-plan-btn">Upgrade to Premium</button>
+                </div>
+
+                <div class="profile-plan-card">
+                  <div class="profile-plan-badge profile-plan-badge-plus">Best Value</div>
+                  <h3 class="profile-plan-name">Premium Plus</h3>
+                  <div class="profile-plan-price">
+                    ₾20
+                    <span class="profile-plan-uses">12 uses</span>
+                  </div>
+                  <p class="profile-plan-description">Maximum AI generations for power users</p>
+                  <ul class="profile-plan-features">
+                    <li>Everything in Premium</li>
+                    <li>12 AI generations</li>
+                    <li>Advanced customization</li>
+                    <li>Dedicated support</li>
+                  </ul>
+                  <button class="profile-plan-btn">Upgrade to Plus</button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </main>
       </div>
     `;
   }
 
   private getDemoPageContent(): string {
+    const planCards = this.demoPlans.map(plan => {
+      const detailParts = [
+        `${plan.stats.area} m2`,
+        `${plan.stats.beds} bd`,
+        `${plan.stats.baths} ba`
+      ];
+      if (plan.stats.levels) {
+        detailParts.push(`${plan.stats.levels} lvl`);
+      }
+      const highlights = plan.highlights.map(item => `<li>${item}</li>`).join('');
+    return `
+        <button class="plan-card" data-plan="${plan.id}">
+          <div class="plan-card__header">
+            <span class="plan-card__name">${plan.name}</span>
+            <span class="plan-card__metric">${plan.stats.area} m2</span>
+                </div>
+          <p class="plan-card__description">${plan.description}</p>
+          <div class="plan-card__details">
+            ${detailParts.map(detail => `<span>${detail}</span>`).join('')}
+              </div>
+          <ul class="plan-card__highlights">
+            ${highlights}
+          </ul>
+        </button>
+      `;
+    }).join('');
+
+    const furnitureCards = this.demoFurnitureOptions.map(item => `
+      <button class="furniture-card" data-furniture="${item.id}">
+        <div class="furniture-card__icon">
+          <img src="./components/icons/${item.icon}" alt="${item.name} icon" />
+        </div>
+        <div class="furniture-card__body">
+          <div class="furniture-card__name">${item.name}</div>
+          <div class="furniture-card__price">${item.price}</div>
+        </div>
+      </button>
+    `).join('');
+
     return `
       <div class="page demo-page">
-        <div class="content">
-          <div class="chat-left-layout">
-            <div class="ai-chatbox">
-              <div class="chatbox-header">
-                <div class="chatbox-title">
-                  <div class="ai-indicator"></div>
-                  <span>AI Assistant</span>
+        <section class="demo-hero-fixed">
+          <img
+            src="./components/hero components/demo_background.png"
+            alt="Forest and mountains background"
+          />
+        </section>
+        <div class="demo-mobile-message">
+          <div class="demo-mobile-card">
+            <h2>Demo unavailable on mobile</h2>
+            <p>Please use a desktop or larger screen to access the interactive demo.</p>
+          </div>
+        </div>
+        <div class="demo-layout">
+          <section class="demo-viewer">
+            <div class="viewer-section" id="viewer-section">
+              <div class="model-viewport">
+                <div class="model-container" id="model-display">
+                  <div class="selection-overlay">
+                    <div class="viewer-summary viewer-summary--compact">
+                      <div class="viewer-summary__name" id="active-plan-name">Select a plan</div>
+                      <button class="viewer-summary__action" id="open-plan-modal">
+                        Choose plan
+                      </button>
+                    </div>
+                    <div class="selection-controls" id="selection-controls" hidden>
+                      <button class="selection-btn" id="selection-move" aria-label="Move furniture">
+                        <span class="icon icon-move"></span>
+                      </button>
+                      <button class="selection-btn" id="selection-rotate-left" aria-label="Rotate left">
+                        <span class="icon icon-rotate-left"></span>
+                      </button>
+                      <button class="selection-btn" id="selection-rotate-right" aria-label="Rotate right">
+                        <span class="icon icon-rotate-right"></span>
+                      </button>
+                      <button class="selection-btn" id="selection-delete" aria-label="Delete furniture">
+                        <span class="icon icon-delete"></span>
+                      </button>
+                      <div class="selection-color">
+                        <button class="selection-btn" id="selection-color" aria-label="Change color">
+                          <span class="selection-color-dot" id="selection-color-dot"></span>
+                        </button>
+                        <div class="selection-color-palette" id="selection-color-palette" hidden>
+                          <button class="selection-color-swatch selection-color-swatch-default" data-color="__default__" aria-label="Default"></button>
+                          <button class="selection-color-swatch" data-color="#ffffff" aria-label="White"></button>
+                          <button class="selection-color-swatch" data-color="#d0d0d0" aria-label="Light grey"></button>
+                          <button class="selection-color-swatch" data-color="#888888" aria-label="Mid grey"></button>
+                          <button class="selection-color-swatch" data-color="#333333" aria-label="Dark grey"></button>
+                          <button class="selection-color-swatch" data-color="#c28b5c" aria-label="Warm wood"></button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div class="chatbox-status">Online</div>
-              </div>
-              
-              <div class="chatbox-messages" id="chatbox-messages">
-                <!-- Initial messages will be added by JavaScript -->
-              </div>
-              
-              <div class="chatbox-input">
-                <div class="input-container">
-                  <input type="text" id="chat-input" placeholder="Describe your architectural vision..." />
-                  <button id="send-message" class="send-btn">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="m22 2-7 20-4-9-9-4z"/>
-                      <path d="m22 2-10 10"/>
-                    </svg>
-                  </button>
-                </div>
+                <div class="viewer-overlay"></div>
               </div>
             </div>
-            
-            <div class="right-content">
-              <div class="visualization-area">
-                <!-- Upload State -->
-                <div class="upload-section" id="upload-section">
-                  <div class="upload-container">
-                    <div class="upload-icon">
-                      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                        <polyline points="17,8 12,3 7,8"/>
-                        <line x1="12" y1="15" x2="12" y2="3"/>
-                      </svg>
-                    </div>
-                    <h3>Upload Blueprint or Describe Your Vision</h3>
-                    <p>Upload a blueprint photo or describe your dream home in the chat to get started</p>
-                    <input type="file" id="blueprint-upload" accept="image/*" style="display: none;" />
-                    <button class="upload-btn" id="upload-btn">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                        <polyline points="17,8 12,3 7,8"/>
-                        <line x1="12" y1="15" x2="12" y2="3"/>
-                      </svg>
-                      Upload Blueprint
-                    </button>
-                  </div>
-                </div>
-
-                <!-- Loading State -->
-                <div class="loading-section" id="loading-section" style="display: none;">
-                  <div class="loading-container">
-                    <div class="loading-spinner"></div>
-                    <div class="loading-content">
-                      <h3 id="loading-title">Processing Blueprint...</h3>
-                      <p id="loading-subtitle">Analyzing architectural plans and generating 3D model</p>
-                      <div class="progress-bar">
-                        <div class="progress-fill" id="progress-fill"></div>
-                      </div>
-                      <div class="loading-steps">
-                        <div class="step active" id="step-1">
-                          <span class="step-icon">📋</span>
-                          <span class="step-text">Analyzing blueprint</span>
-                        </div>
-                        <div class="step" id="step-2">
-                          <span class="step-icon">🏗️</span>
-                          <span class="step-text">Building 3D structure</span>
-                        </div>
-                        <div class="step" id="step-3">
-                          <span class="step-icon">🎨</span>
-                          <span class="step-text">Applying materials</span>
-                        </div>
-                        <div class="step" id="step-4">
-                          <span class="step-icon">💡</span>
-                          <span class="step-text">Rendering final model</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 3D Viewer State -->
-                <div class="viewer-section" id="viewer-section" style="display: none;">
-                  <div class="viz-header">
-                    <div class="viz-status">
-                      <div class="status-indicator active"></div>
-                      <span>3D Model Generated</span>
-                    </div>
-                    <div class="viz-actions">
-                      <button class="viz-btn" id="regenerate-btn">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
-                          <path d="M21 3v5h-5"/>
-                          <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
-                          <path d="M3 21v-5h5"/>
-                        </svg>
-                        Regenerate
-                      </button>
-                    </div>
-                  </div>
-                  
-                  <div class="model-viewport">
-                    <div class="model-container" id="model-display">
-                      <!-- Navigation Controls -->
-                      <div class="view-navigation">
-                        <button class="nav-arrow nav-left" id="nav-left" title="Previous View">
-                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="15,18 9,12 15,6"/>
-                          </svg>
-                        </button>
-                        <button class="nav-arrow nav-right" id="nav-right" title="Next View">
-                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="9,18 15,12 9,6"/>
-                          </svg>
-                        </button>
-                        <button class="nav-arrow nav-up" id="nav-up" title="Top View">
-                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="18,15 12,9 6,15"/>
-                          </svg>
-                        </button>
-                      </div>
-
-                      <!-- House Image Display -->
-                      <img src="./house views/Blue-North.png" 
-                           alt="3D House View" 
-                           class="house-model" 
-                           id="house-view-image" />
-                      
-                      <!-- Roof Highlight Overlay (only visible on top view when clicked) -->
-                      <div class="roof-highlight-overlay" id="roof-highlight" style="display: none;">
-                        <svg class="roof-outline" viewBox="0 0 100 100" preserveAspectRatio="none">
-                          <polygon points="38.6,16.8 49.8,15 61,16.8 61,86.2 49.8,88 38.6,86.2" 
-                                   class="roof-highlight"
-                                   fill="rgba(0, 255, 136, 0.2)" 
-                                   stroke="rgba(0, 255, 136, 0.8)" 
-                                   stroke-width=".1"/>
-                        </svg>
-                        <div class="roof-selection-panel">
-                          <div class="roof-panel-header">
-                            <span class="roof-status-dot"></span>
-                            <span>Roof Selected</span>
-                          </div>
-                          <button class="get-suggestions-btn" id="get-suggestions-btn">
-                            <span>Get Suggestions</span>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                              <path d="m9 18 6-6-6-6"/>
-                            </svg>
-                          </button>
-                        </div>
-                      </div>
-                      
-                      <!-- View Info -->
-                      <div class="view-info">
-                        <span id="current-view-label">North View</span>
-                        <div class="view-indicators">
-                          <div class="view-dot active" data-view="0"></div>
-                          <div class="view-dot" data-view="1"></div>
-                          <div class="view-dot" data-view="2"></div>
-                          <div class="view-dot" data-view="3"></div>
-                          <div class="view-dot" data-view="4"></div>
-                          <div class="view-dot" data-view="5"></div>
-                          <div class="view-dot" data-view="6"></div>
-                          <div class="view-dot" data-view="7"></div>
-                          <div class="view-dot" data-view="8"></div>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div class="model-controls">
-                      <button class="control-btn-small" title="Reset View" id="reset-view">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
-                          <path d="M21 3v5h-5"/>
-                          <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
-                          <path d="M3 21v-5h5"/>
-                        </svg>
-                      </button>
-                      <button class="control-btn-small" title="Change Color" id="change-color">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                          <circle cx="12" cy="12" r="10"/>
-                          <circle cx="12" cy="12" r="4"/>
-                          <path d="M12 2v4"/>
-                          <path d="M12 18v4"/>
-                          <path d="m4.93 4.93 2.83 2.83"/>
-                          <path d="m16.24 16.24 2.83 2.83"/>
-                          <path d="M2 12h4"/>
-                          <path d="M18 12h4"/>
-                          <path d="m4.93 19.07 2.83-2.83"/>
-                          <path d="m16.24 7.76 2.83-2.83"/>
-                        </svg>
-                      </button>
-                      <button class="control-btn-small" title="Download" id="download-view">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                          <polyline points="7,10 12,15 17,10"/>
-                          <line x1="12" y1="15" x2="12" y2="3"/>
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                  
-                  <!-- Material Suggestions (appears below model controls when clicked) -->
-                  <div class="material-suggestions" id="material-suggestions" style="display: none;">
-                    <div class="suggestions-header">
-                      <h4>Material Options</h4>
-                      <p>Select a roofing material to see how it looks on your house</p>
-                    </div>
-                    <div class="suggestions-grid">
-                      <div class="suggestion-box" data-suggestion="gorgia-green" title="Gorgia - Green" data-tooltip="Gorgia - Green • 34.50₾">
-                        <img src="./suggestions/03915_-_roof_jpg.webp" alt="Gorgia Green" />
-                        <div class="popup-element">
-                          <div>Gorgia - Green</div>
-                          <div>34.50₾</div>
-                        </div>
-                      </div>
-                      <div class="suggestion-box" data-suggestion="gorgia-red" title="Gorgia - Red" data-tooltip="Gorgia - Red • 31.50₾">
-                        <img src="./suggestions/03914_-_roof_jpg.webp" alt="Gorgia Red" />
-                        <div class="popup-element">
-                          <div>Gorgia - Red</div>
-                          <div>31.50₾</div>
-                        </div>
-                      </div>
-                      <div class="suggestion-box" data-suggestion="mihouse-orange" title="MiHouse - Orange" data-tooltip="MiHouse - Orange • 37.95₾">
-                        <img src="./suggestions/BM-00038609_-_roof_jpg.webp" alt="MiHouse Orange" />
-                        <div class="popup-element">
-                          <div>MiHouse - Orange</div>
-                          <div>37.95₾</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+          </section>
+          <aside class="demo-panel furniture-panel">
+            <header class="panel-header">
+              <h2>Furniture Library</h2>
+            </header>
+            <div class="furniture-grid">
+              ${furnitureCards}
+            </div>
+            <div class="furniture-footer">
+              <div class="furniture-summary" id="furniture-summary">No items placed</div>
+              <div class="furniture-total" id="furniture-total">Total: ₾0</div>
+              <button class="furniture-checkout-btn" id="furniture-checkout" disabled>Checkout</button>
+            </div>
+          </aside>
+        </div>
+      </div>
+      <div class="plan-modal" id="plan-modal" aria-hidden="true">
+        <div class="plan-modal__backdrop"></div>
+        <div class="plan-modal__dialog" role="dialog" aria-modal="true">
+          ${!this.currentUserId ? `
+            <div class="plan-gate" id="plan-gate">
+              <div class="plan-gate__card">
+                <h3>Please sign in</h3>
+                <p>You need to sign in before choosing a floor plan.</p>
+                <button class="auth-primary-btn" data-page="signin">Sign in</button>
               </div>
+            </div>
+          ` : ''}
+          <header class="plan-modal__header">
+            <div>
+              <h2>Select a floor plan</h2>
+              <p>Choose one of our sample layouts to explore in 3D.</p>
+            </div>
+            <button class="plan-modal__close" id="close-plan-modal" aria-label="Close plan selector">&times;</button>
+          </header>
+          <div class="plan-modal__content">
+            <div class="plan-grid">
+              ${planCards}
+            </div>
+            <div class="plan-modal__footer">
+              <p class="plan-modal__upgrade-note">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
+                  <polyline points="13 2 13 9 20 9"/>
+                </svg>
+                To upload your blueprint, <button class="plan-modal__upgrade-link" data-page="profile">upgrade to Premium</button>
+              </p>
             </div>
           </div>
         </div>
@@ -507,730 +940,937 @@ export class Router {
   }
 
   private attachEventListeners(): void {
-    // Navigation buttons
-    const navButtons = this.appElement.querySelectorAll('.nav-btn, .cta-button');
-    navButtons.forEach(button => {
-      button.addEventListener('click', (e) => {
-        const target = e.target as HTMLElement;
-        let page = target.getAttribute('data-page') as PageName;
-        
-        // Check if it's a nested element inside the button
-        if (!page) {
-          const buttonParent = target.closest('[data-page]') as HTMLElement;
-          if (buttonParent) {
-            page = buttonParent.getAttribute('data-page') as PageName;
-          }
-        }
-        
+    // Any element with data-page acts as a router link (Main, Demo, Sign in, etc.)
+    const routeLinks = this.appElement.querySelectorAll<HTMLElement>('[data-page]');
+    routeLinks.forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const target = e.currentTarget as HTMLElement;
+        const page = target.getAttribute('data-page') as PageName | null;
         if (page) {
           this.navigateTo(page);
         }
       });
     });
 
-    // Demo page interactions
-    if (this.currentPage === 'demo') {
-      this.attachDemoEventListeners();
-      this.attachChatEventListeners();
-      this.initializeVisualization();
-    }
-  }
-
-  private attachDemoEventListeners(): void {
-    this.setupUploadFunctionality();
-    this.setup3DViewer();
-    this.attachChatEventListeners();
-    this.attachSuggestionEventListeners();
-  }
-
-  private setupUploadFunctionality(): void {
-    const uploadBtn = this.appElement.querySelector('#upload-btn');
-    const blueprintUpload = this.appElement.querySelector('#blueprint-upload') as HTMLInputElement;
-    const uploadSection = this.appElement.querySelector('#upload-section') as HTMLElement;
-    const viewerSection = this.appElement.querySelector('#viewer-section') as HTMLElement;
-
-    // Upload button click handler
-    uploadBtn?.addEventListener('click', () => {
-      blueprintUpload?.click();
-    });
-
-    // File upload handler
-    blueprintUpload?.addEventListener('change', (e: Event) => {
-      const target = e.target as HTMLInputElement;
-      if (target.files && target.files.length > 0) {
-        this.startRenderingProcess(uploadSection, viewerSection);
-      }
-    });
-  }
-
-  private setup3DViewer(): void {
-    const views = [
-      { name: 'North View', file: 'Blue-North.png' },
-      { name: 'North-East View', file: 'Blue-North-east.png' },
-      { name: 'East View', file: 'Blue-East.png' },
-      { name: 'South-East View', file: 'Blue-South-East.png' },
-      { name: 'South View', file: 'Blue-South.png' },
-      { name: 'South-West View', file: 'Blue-South-West.png' },
-      { name: 'West View', file: 'Blue-West.png' },
-      { name: 'North-West View', file: 'Blue-North-West.png' },
-      { name: 'Top View', file: 'Blue-Top.png' }
-    ];
-
-    let currentViewIndex = 0;
-    let currentColor = 'Blue';
-
-    const updateView = (index: number) => {
-      const houseImage = this.appElement.querySelector('#house-view-image') as HTMLImageElement;
-      const viewLabel = this.appElement.querySelector('#current-view-label');
-      const viewDots = this.appElement.querySelectorAll('.view-dot');
-      const roofHighlight = this.appElement.querySelector('#roof-highlight') as HTMLElement;
-      const viewerSection = this.appElement.querySelector('#viewer-section');
-
-      if (houseImage && viewLabel) {
-        // Check if there's a stored color from material selection
-        const storedColor = viewerSection?.getAttribute('data-current-color') || currentColor;
-        currentColor = storedColor; // Update the local variable
-        
-        const view = views[index];
-        const fileName = view.file.replace('Blue', currentColor);
-        houseImage.src = `./house views/${fileName}`;
-        viewLabel.textContent = view.name;
-
-        // Update view indicators
-        viewDots.forEach((dot, i) => {
-          dot.classList.toggle('active', i === index);
+    // Burger menu toggle (mobile)
+    const burger = this.appElement.querySelector<HTMLElement>('.nav-burger');
+    const drawer = this.appElement.querySelector<HTMLElement>('.nav-drawer');
+    if (burger && drawer) {
+      burger.addEventListener('click', () => {
+        const isOpen = drawer.classList.toggle('open');
+        burger.classList.toggle('open');
+        drawer.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+      });
+      drawer.querySelectorAll<HTMLElement>('[data-page]').forEach(item => {
+        item.addEventListener('click', () => {
+          drawer.classList.remove('open');
+          burger.classList.remove('open');
+          drawer.setAttribute('aria-hidden', 'true');
         });
-
-        // Show/hide roof interaction based on view
-        if (roofHighlight) {
-          if (index === 8) { // Top view
-            this.setupRoofInteraction();
-          } else {
-            roofHighlight.style.display = 'none';
-            roofHighlight.classList.remove('active');
-            this.removeRoofInteraction();
-          }
-        }
-      }
-    };
-
-    // Navigation controls
-    const navLeft = this.appElement.querySelector('#nav-left');
-    const navRight = this.appElement.querySelector('#nav-right');
-    const navUp = this.appElement.querySelector('#nav-up');
-
-    navLeft?.addEventListener('click', () => {
-      currentViewIndex = (currentViewIndex - 1 + views.length) % views.length;
-      updateView(currentViewIndex);
-    });
-
-    navRight?.addEventListener('click', () => {
-      currentViewIndex = (currentViewIndex + 1) % views.length;
-      updateView(currentViewIndex);
-    });
-
-    navUp?.addEventListener('click', () => {
-      currentViewIndex = 8; // Top view
-      updateView(currentViewIndex);
-    });
-
-    // Color change functionality
-    const changeColorBtn = this.appElement.querySelector('#change-color');
-    changeColorBtn?.addEventListener('click', () => {
-      currentColor = currentColor === 'Blue' ? 'Green' : 'Blue';
-      this.storeCurrentColor(currentColor); // Store the new color
-      updateView(currentViewIndex);
-      
-      this.addAIMessage(`I've changed the house color to ${currentColor.toLowerCase()}! You can see how different color schemes affect the overall appearance of your design.`);
-    });
-
-    // Reset view
-    const resetViewBtn = this.appElement.querySelector('#reset-view');
-    resetViewBtn?.addEventListener('click', () => {
-      currentViewIndex = 0;
-      updateView(currentViewIndex);
-    });
-
-    // Download functionality
-    const downloadBtn = this.appElement.querySelector('#download-view');
-    downloadBtn?.addEventListener('click', () => {
-      this.addAIMessage("Download functionality would save the current view in high resolution. In a real implementation, this would generate and download the current 3D render.");
-    });
-
-    // View dot navigation
-    const viewDots = this.appElement.querySelectorAll('.view-dot');
-    viewDots.forEach((dot, index) => {
-      dot.addEventListener('click', () => {
-        currentViewIndex = index;
-        updateView(currentViewIndex);
       });
-    });
+    }
 
-    // Regenerate button
-    const regenerateBtn = this.appElement.querySelector('#regenerate-btn');
-    regenerateBtn?.addEventListener('click', () => {
-      this.addAIMessage("Regenerating the 3D model with enhanced details and improved lighting. This might take a moment...");
-      
-      setTimeout(() => {
-        updateView(currentViewIndex);
-        this.addAIMessage("Perfect! I've regenerated the model with improved lighting and more realistic materials. The new version shows enhanced shadows and better texture details.");
-      }, 2000);
-    });
+    // Wire up password visibility toggles on auth pages
+    this.attachPasswordVisibilityToggles();
+
+    // Global logout buttons (e.g., in profile header)
+    this.bindLogoutButtons();
+
+    // Page-specific wiring
+    if (this.currentPage === 'demo') {
+      void this.attachDemoEventListeners();
+    } else if (this.currentPage === 'signin') {
+      this.attachSignInListeners();
+    } else if (this.currentPage === 'signup') {
+      this.attachSignUpListeners();
+    } else if (this.currentPage === 'profile') {
+      this.attachProfileListeners();
+    } else if (this.currentPage === 'checkout') {
+      this.renderCheckoutDetails();
+    }
   }
 
-  private initMouseFollower(): void {
-    const mouseFollower = this.appElement.querySelector('.mouse-follower') as HTMLElement;
-    if (!mouseFollower) return;
-
-    let mouseX = 0;
-    let mouseY = 0;
-    let followerX = 0;
-    let followerY = 0;
-
-    // Check if element has dark background
-    const isDarkElement = (element: Element): boolean => {
-      // Check for dark background classes/sections
-      const darkSelectors = [
-        '.hero-section',
-        '.hero-container',
-        '.hero-content',
-        '.hero-visual',
-        '.visual-container',
-        '.visual-card',
-        '.immersive-hero',
-        '.demo-hero', 
-        '.testimonial-section',
-        '.command-display',
-        '.primary-action',
-        '.experience-button',
-        '.demo-action-btn:hover',
-        '.control-btn:hover',
-        '.back-to-main:hover'
-      ];
-      
-      // Check if element or any parent matches dark selectors
-      let currentElement: Element | null = element;
-      while (currentElement) {
-        for (const selector of darkSelectors) {
-          if (currentElement.matches && currentElement.matches(selector)) {
-            return true;
-          }
-        }
-        
-        // Check computed background color
-        if (currentElement instanceof HTMLElement) {
-          const style = window.getComputedStyle(currentElement);
-          const bgColor = style.backgroundColor;
-          
-          // Check if background is dark (rough heuristic)
-          if (bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
-            const rgb = bgColor.match(/\d+/g);
-            if (rgb && rgb.length >= 3) {
-              const r = parseInt(rgb[0]);
-              const g = parseInt(rgb[1]);
-              const b = parseInt(rgb[2]);
-              const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-              if (brightness < 128) {
-                return true;
-              }
-            }
-          }
-        }
-        
-        currentElement = currentElement.parentElement;
-      }
-      
-      return false;
+  private bindLogoutButtons(): void {
+    // Capture-phase listener on document ensures we catch buttons inside shadowed or re-rendered nodes
+    if (this.logoutDocHandler) {
+      document.removeEventListener('click', this.logoutDocHandler, true);
+      this.logoutDocHandler = null;
+    }
+    this.logoutDocHandler = (event: Event) => {
+      const target = event.target as HTMLElement | null;
+      const btn = target?.closest('.auth-logout-btn') as HTMLButtonElement | null;
+      if (!btn) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void this.handleLogout(btn);
     };
-
-    // Track mouse movement and update color based on element
-    const updateMousePosition = (e: MouseEvent) => {
-      mouseX = e.clientX;
-      mouseY = e.clientY;
-      
-      // Get element under mouse
-      const elementUnderMouse = document.elementFromPoint(mouseX, mouseY);
-      if (elementUnderMouse) {
-        const isOnDark = isDarkElement(elementUnderMouse);
-        
-        // Update color classes
-        mouseFollower.classList.remove('on-dark', 'on-light');
-        if (isOnDark) {
-          mouseFollower.classList.add('on-dark');
-        } else {
-          mouseFollower.classList.add('on-light');
-        }
-      }
-    };
-
-    // Smooth animation loop
-    const animateFollower = () => {
-      const dx = mouseX - followerX;
-      const dy = mouseY - followerY;
-      
-      followerX += dx * 0.1;
-      followerY += dy * 0.1;
-      
-      mouseFollower.style.left = followerX + 'px';
-      mouseFollower.style.top = followerY + 'px';
-      
-      requestAnimationFrame(animateFollower);
-    };
-
-    // Start animation
-    animateFollower();
-
-    // Mouse events
-    document.addEventListener('mousemove', updateMousePosition);
-    
-    document.addEventListener('mouseenter', () => {
-      mouseFollower.classList.add('active');
-    });
-    
-    document.addEventListener('mouseleave', () => {
-      mouseFollower.classList.remove('active');
-    });
-
-    // Hover effects for interactive elements
-    const interactiveElements = this.appElement.querySelectorAll('button, a, .nav-btn, .demo-action-btn, .control-btn, .action-btn');
-    
-    interactiveElements.forEach(element => {
-      element.addEventListener('mouseenter', () => {
-        mouseFollower.classList.add('hover');
-      });
-      
-      element.addEventListener('mouseleave', () => {
-        mouseFollower.classList.remove('hover');
-      });
-      
-      element.addEventListener('mousedown', () => {
-        mouseFollower.classList.add('click');
-      });
-      
-      element.addEventListener('mouseup', () => {
-        mouseFollower.classList.remove('click');
-      });
-    });
+    document.addEventListener('click', this.logoutDocHandler, true);
   }
 
-  private attachChatEventListeners(): void {
-    const chatInput = this.appElement.querySelector('#chat-input') as HTMLInputElement;
-    const sendButton = this.appElement.querySelector('#send-message') as HTMLButtonElement;
-    const messagesContainer = this.appElement.querySelector('#chatbox-messages') as HTMLElement;
+  private async handleLogout(target?: HTMLButtonElement | null): Promise<void> {
+    if (target) target.disabled = true;
+    try {
+      // Use global scope to ensure all sessions are cleared
+      // (Supabase v2 signOut accepts an options object)
+      await supabase.auth.signOut({ scope: 'global' } as any);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Logout error:', error);
+    } finally {
+      this.currentUserId = null;
+      this.currentUserName = null;
+      this.currentPage = 'signin';
+      window.location.hash = 'signin';
+      this.render();
+      if (target) target.disabled = false;
+    }
+  }
 
-    if (!chatInput || !sendButton || !messagesContainer) return;
+  private renderCheckoutDetails(): void {
+    const list = this.appElement.querySelector('#checkout-items-list') as HTMLElement | null;
+    const subtotalEl = this.appElement.querySelector('#checkout-subtotal') as HTMLElement | null;
+    const taxEl = this.appElement.querySelector('#checkout-tax') as HTMLElement | null;
+    const totalEl = this.appElement.querySelector('#checkout-total') as HTMLElement | null;
 
-    const aiResponses = [
-      "I can visualize a stunning modern home with floor-to-ceiling windows and clean lines. The natural light would create beautiful shadows throughout the day.",
-      "That sounds like a perfect blend of contemporary and traditional elements. I'm imagining warm wood accents against sleek metal fixtures.",
-      "Excellent choice! A minimalist approach with carefully selected materials can create a timeless and serene living space.",
-      "I love the sustainable approach! Green roofs and solar integration can make your home both beautiful and environmentally conscious.",
-      "That design would create wonderful indoor-outdoor flow. Large sliding doors opening to a deck or patio would be perfect.",
-      "Industrial elements like exposed steel beams can add character while maintaining that clean architectural aesthetic.",
-      "The use of natural stone would ground the design beautifully and create a strong connection to the landscape."
-    ];
+    const formatMoney = (value: number) => `₾${value.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 
-    const sendMessage = () => {
-      const message = chatInput.value.trim();
-      if (!message) return;
-
-      // Check if this is a roof suggestion message - don't trigger random response
-      const isRoofSuggestionMessage = message.includes('suggestion about this roof') || 
-                                      message.includes('roof where can i get one');
-
-      // Add user message
-      const userMessage = document.createElement('div');
-      userMessage.className = 'message user-message';
-      userMessage.innerHTML = `
-        <div class="message-avatar">
-          <span>You</span>
-        </div>
-        <div class="message-content">
-          <p>${message}</p>
-        </div>
-      `;
-      messagesContainer.appendChild(userMessage);
-
-      // Clear input
-      chatInput.value = '';
-
-      // Only respond with random AI response if it's not a special roof suggestion message
-      if (!isRoofSuggestionMessage) {
-        // Show typing indicator
-        const typingIndicator = document.createElement('div');
-        typingIndicator.className = 'message ai-message typing-message';
-        typingIndicator.innerHTML = `
-          <div class="message-avatar">
-            <span>AI</span>
-          </div>
-          <div class="typing-indicator">
-            <span>AI is thinking</span>
-            <div class="typing-dots">
-              <div class="typing-dot"></div>
-              <div class="typing-dot"></div>
-              <div class="typing-dot"></div>
-            </div>
-          </div>
+    if (list) {
+      list.innerHTML = '';
+      if (!this.furnitureSnapshots.length) {
+        const empty = document.createElement('div');
+        empty.className = 'checkout-empty';
+        empty.innerHTML = `
+          <p>No furniture placed yet.</p>
+          <button type="button" class="auth-secondary-btn" data-page="demo">Back to demo</button>
         `;
-        messagesContainer.appendChild(typingIndicator);
-
-        // Scroll to bottom
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-
-        // Simulate AI response
-        setTimeout(() => {
-                  // Remove typing indicator
-        const typingElement = messagesContainer.querySelector('.typing-message') as HTMLElement;
-        if (typingElement) {
-          typingElement.remove();
-        }
-
-          // Add AI response
-          const randomResponse = aiResponses[Math.floor(Math.random() * aiResponses.length)];
-          const aiMessage = document.createElement('div');
-          aiMessage.className = 'message ai-message';
-          aiMessage.innerHTML = `
-            <div class="message-avatar">
-              <span>AI</span>
+        list.appendChild(empty);
+      } else {
+        this.furnitureSnapshots.forEach(item => {
+          const option = this.demoFurnitureOptions.find(o => o.id === item.type);
+          if (!option) return;
+          const row = document.createElement('div');
+          row.className = 'checkout-item';
+          row.innerHTML = `
+            <div class="checkout-item__left">
+              <div class="checkout-item__thumb">
+                <img src="./components/icons/${option.icon}" alt="${option.name}" />
+              </div>
+              <div class="checkout-item__label">
+                <span class="checkout-item__name">${option.name}</span>
+                <span class="checkout-item__meta">Rotation ${Math.round(((item.rotation * 180) / Math.PI + 360) % 360)}&deg;</span>
+              </div>
             </div>
-            <div class="message-content">
-              <p>${randomResponse}</p>
-            </div>
+            <div class="checkout-item__price">${option.price}</div>
           `;
-          messagesContainer.appendChild(aiMessage);
-
-          // Scroll to bottom
-          messagesContainer.scrollTop = messagesContainer.scrollHeight;
-        }, 1500 + Math.random() * 1000); // Random delay between 1.5-2.5 seconds
+          list.appendChild(row);
+        });
       }
-    };
+    }
 
-    // Send message on button click
-    sendButton.addEventListener('click', sendMessage);
+    let subtotal = 0;
+    for (const item of this.furnitureSnapshots) {
+      const option = this.demoFurnitureOptions.find(o => o.id === item.type);
+      if (!option) continue;
+      const numeric = parseFloat(option.price.replace(/[^\d.]/g, ''));
+      if (!Number.isNaN(numeric)) subtotal += numeric;
+    }
+    const tax = subtotal * 0.18;
+    const total = subtotal + tax;
 
-    // Send message on Enter key
-    chatInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') {
-        sendMessage();
-      }
-    });
+    if (subtotalEl) subtotalEl.textContent = formatMoney(subtotal);
+    if (taxEl) taxEl.textContent = formatMoney(tax);
+    if (totalEl) totalEl.textContent = formatMoney(total);
   }
 
-  private initializeVisualization(): void {
-    // Simulate loading the house image
-    const houseImage = this.appElement.querySelector('#house-image') as HTMLImageElement;
-    const loadingOverlay = this.appElement.querySelector('#loading-state')?.parentElement as HTMLElement;
-    const regenerateBtn = this.appElement.querySelector('#regenerate-btn') as HTMLButtonElement;
-    const roofOverlay = this.appElement.querySelector('#roof-overlay') as HTMLElement;
-    const getSuggestionBtn = this.appElement.querySelector('#get-suggestion-btn') as HTMLButtonElement;
-    const restyleBtn = this.appElement.querySelector('#restyle-btn') as HTMLButtonElement;
-
-    if (!houseImage || !loadingOverlay || !regenerateBtn || !roofOverlay) return;
-
-    // Initially show loading
-    loadingOverlay.classList.add('active');
-
-    // Load the actual house image after a delay
-    setTimeout(() => {
-      // Use the actual house image from components folder
-      houseImage.src = './components/Screenshot 2025-06-21 021123.png';
-      
-      houseImage.style.width = '100%';
-      houseImage.style.height = '100%';
-      houseImage.style.objectFit = 'contain';
-      
-      // Hide loading overlay
-      loadingOverlay.classList.remove('active');
-    }, 2000);
-
-    // Handle regenerate button
-    regenerateBtn.addEventListener('click', () => {
-      loadingOverlay.classList.add('active');
-      
-      setTimeout(() => {
-        // Add slight random rotation or position change to simulate regeneration
-        const randomRotation = Math.random() * 4 - 2; // -2 to 2 degrees
-        houseImage.style.transform = `rotate(${randomRotation}deg)`;
-        loadingOverlay.classList.remove('active');
-      }, 1500);
-    });
-
-    // Add roof selection functionality back
-    houseImage.addEventListener('click', () => {
-      roofOverlay.classList.toggle('active');
-      
-      // Show/hide quick actions in chat
-      const quickActions = this.appElement.querySelector('#roof-quick-actions') as HTMLElement;
-      if (quickActions) {
-        if (roofOverlay.classList.contains('active')) {
-          quickActions.style.display = 'block';
-        } else {
-          quickActions.style.display = 'none';
-        }
-      }
-    });
-
-    // Roof action buttons are now handled in attachRoofActionListeners()
-
-    // Add hover effects to model controls
-    const controlBtns = this.appElement.querySelectorAll('.control-btn-small');
-    controlBtns.forEach(btn => {
+  private attachPasswordVisibilityToggles(): void {
+    const toggles = this.appElement.querySelectorAll<HTMLButtonElement>('.auth-password-toggle');
+    toggles.forEach(btn => {
       btn.addEventListener('click', () => {
-        // Add visual feedback
-        (btn as HTMLElement).style.transform = 'scale(0.95)';
-        setTimeout(() => {
-          (btn as HTMLElement).style.transform = '';
-        }, 150);
+        const wrapper = btn.closest('.auth-password');
+        const input = wrapper?.querySelector<HTMLInputElement>('input');
+        if (!input) return;
+        const isHidden = input.type === 'password';
+        input.type = isHidden ? 'text' : 'password';
+        btn.setAttribute('aria-label', isHidden ? 'Hide password' : 'Show password');
+        btn.classList.toggle('auth-password-toggle--visible', isHidden);
       });
     });
-
-    // Initialize chat with AI greeting
-    this.initializeChat();
   }
 
-  private initializeChat(): void {
-    const messagesContainer = this.appElement.querySelector('#chatbox-messages');
-    if (!messagesContainer) return;
-
-    // Clear any existing messages
-    messagesContainer.innerHTML = '';
-
-    // Add initial AI greeting with typing simulation
-    this.addTypingIndicator();
-    setTimeout(() => {
-      this.removeTypingIndicator();
-      this.addAIMessage("Hello! I'm ArTinTech AI, your architectural assistant. I can help you visualize and improve your home designs. Feel free to ask me anything!");
-    }, 1000);
-  }
-
-  private addUserMessage(message: string): void {
-    const messagesContainer = this.appElement.querySelector('#chatbox-messages');
-    if (!messagesContainer) return;
-
-    const messageDiv = document.createElement('div');
-    messageDiv.className = 'message user-message';
-    messageDiv.innerHTML = `
-      <div class="message-avatar">
-        <span>You</span>
-      </div>
-      <div class="message-content">
-        <p>${message}</p>
-      </div>
-    `;
-    messagesContainer.appendChild(messageDiv);
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-  }
-
-  private addAIMessage(message: string): void {
-    const messagesContainer = this.appElement.querySelector('#chatbox-messages');
-    if (!messagesContainer) return;
-
-    // Add typing indicator first
-    this.addTypingIndicator();
-
-    // Wait a moment, then remove typing and start word-by-word typing
-    setTimeout(() => {
-      this.removeTypingIndicator();
-      
-      // Create AI message container with empty content
-      const messageDiv = document.createElement('div');
-      messageDiv.className = 'message ai-message';
-      const messageId = `ai-message-${Date.now()}`;
-      messageDiv.innerHTML = `
-        <div class="message-avatar">
-          <span>AI</span>
-        </div>
-        <div class="message-content">
-          <p id="${messageId}"></p>
-        </div>
-      `;
-      messagesContainer.appendChild(messageDiv);
-      messagesContainer.scrollTop = messagesContainer.scrollHeight;
-      
-      // Start word-by-word typing
-      this.typeMessageWordByWord(message, messageId, messagesContainer as HTMLElement);
-    }, 800);
-  }
-
-  private addAIMessageWithFormatting(message: string): void {
-    const messagesContainer = this.appElement.querySelector('#chatbox-messages');
-    if (!messagesContainer) return;
-
-    // Add typing indicator first
-    this.addTypingIndicator();
-
-    // Wait a moment, then remove typing and add formatted message
-    setTimeout(() => {
-      this.removeTypingIndicator();
-      
-      // Process the message to handle markdown-style formatting
-      let formattedMessage = message
-        // Handle bold text **text**
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        // Handle markdown links [text](url)
-        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color: #007bff; text-decoration: underline;">$1</a>');
-      
-      // Create AI message container with formatted content
-      const messageDiv = document.createElement('div');
-      messageDiv.className = 'message ai-message';
-      messageDiv.innerHTML = `
-        <div class="message-avatar">
-          <span>AI</span>
-        </div>
-        <div class="message-content">
-          <p>${formattedMessage}</p>
-        </div>
-      `;
-      messagesContainer.appendChild(messageDiv);
-      messagesContainer.scrollTop = messagesContainer.scrollHeight;
-    }, 800);
-  }
-
-  private typeMessageWordByWord(message: string, elementId: string, messagesContainer: HTMLElement): void {
-    const element = document.getElementById(elementId) as HTMLElement;
-    if (!element) return;
-    
-    const words = message.split(' ');
-    let currentWordIndex = 0;
-    
-    const typeNextWord = () => {
-      if (currentWordIndex >= words.length) return;
-      
-      const currentContent = element.innerHTML;
-      const newWord = words[currentWordIndex];
-      
-      // Add formatting for company names and special terms
-      const formattedWord = this.formatSpecialWords(newWord);
-      
-      element.innerHTML = currentContent + (currentContent ? ' ' : '') + formattedWord;
-      currentWordIndex++;
-      
-      // Scroll to keep message visible
-      messagesContainer.scrollTop = messagesContainer.scrollHeight;
-      
-      // Random delay between words (80-200ms) to simulate natural typing
-      const delay = Math.random() * 120 + 80;
-      setTimeout(typeNextWord, delay);
-    };
-    
-    // Start typing after a brief pause
-    setTimeout(typeNextWord, 200);
-  }
-
-  private formatSpecialWords(word: string): string {
-    // Check for URLs
-    if (word.includes('http')) {
-      // Extract just the URL part if it has punctuation at the end
-      const urlMatch = word.match(/(https?:\/\/[^\s,.!?;]+)/);
-      if (urlMatch) {
-        const url = urlMatch[1];
-        const remaining = word.replace(url, '');
-        return `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color: #007bff; text-decoration: underline;">${url}</a>${remaining}`;
+  private async refreshAuthState(): Promise<void> {
+    try {
+      // Ensure any pending OAuth redirect (e.g. Google) is exchanged for a session
+      // before we ask for the current user. This is especially important right
+      // after returning from the Google consent screen.
+      try {
+        await supabase.auth.getSession();
+      } catch {
+        // ignore session errors here; getUser below will reflect the real state
       }
-    }
 
-    // Check for prices (₾ symbol)
-    if (word.includes('₾')) {
-      // Bold any word containing Georgian Lari symbol
-      return `<strong>${word}</strong>`;
-    }
-
-    // Check for specific mathematical expressions like "60 × 34.50₾"
-    if (word.includes('×') && word.includes('₾')) {
-      return `<strong>${word}</strong>`;
-    }
-
-    // Format company names and special terms
-    const cleanWord = word.replace(/[.,!?:;]/g, '');
-    const specialWords = ['Gorgia', 'MiHouse', 'ArTinTech', 'AI', '3D'];
-    if (specialWords.includes(cleanWord)) {
-      return word.replace(cleanWord, `<strong>${cleanWord}</strong>`);
-    }
-    
-    return word;
-  }
-
-  private addTypingIndicator(): void {
-    const messagesContainer = this.appElement.querySelector('#chatbox-messages');
-    if (!messagesContainer) return;
-
-    const typingDiv = document.createElement('div');
-    typingDiv.className = 'message ai-message typing-message';
-    typingDiv.id = 'typing-indicator';
-    typingDiv.innerHTML = `
-      <div class="message-avatar">
-        <span>AI</span>
-      </div>
-      <div class="message-content">
-        <div class="typing-indicator">
-          <div class="typing-dots">
-            <div class="typing-dot"></div>
-            <div class="typing-dot"></div>
-            <div class="typing-dot"></div>
-          </div>
-        </div>
-      </div>
-    `;
-    messagesContainer.appendChild(typingDiv);
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-  }
-
-  private removeTypingIndicator(): void {
-    const typingIndicator = this.appElement.querySelector('#typing-indicator') as HTMLElement;
-    if (typingIndicator) {
-      typingIndicator.remove();
-    }
-  }
-
-  private typeWordByWord(texts: string[], elementIds: string[], messagesContainer: HTMLElement): void {
-    let currentTextIndex = 0;
-    let currentWordIndex = 0;
-    
-    const typeNextWord = () => {
-      if (currentTextIndex >= texts.length) return;
-      
-      const currentText = texts[currentTextIndex];
-      const words = currentText.split(' ');
-      const element = document.getElementById(elementIds[currentTextIndex]);
-      
-      if (!element) {
-        currentTextIndex++;
-        currentWordIndex = 0;
-        setTimeout(typeNextWord, 100);
+      const { data, error } = await supabase.auth.getUser();
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.warn('Failed to get Supabase user', error);
+        this.currentUserId = null;
+        this.currentUserName = null;
         return;
       }
-      
-      if (currentWordIndex < words.length) {
-        // Add the next word
-        const currentContent = element.innerHTML;
-        const newWord = words[currentWordIndex];
-        
-        // Add formatting for company names
-        const formattedWord = (newWord === 'Gorgia' || newWord === 'Mihouse') 
-          ? `<strong>${newWord}</strong>` 
-          : newWord;
-        
-        element.innerHTML = currentContent + (currentContent ? ' ' : '') + formattedWord;
-        currentWordIndex++;
-        
-        // Scroll to keep message visible
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-        
-        // Random delay between words (100-300ms) to simulate human typing
-        const delay = Math.random() * 200 + 100;
-        setTimeout(typeNextWord, delay);
-      } else {
-        // Move to next paragraph
-        currentTextIndex++;
-        currentWordIndex = 0;
-        
-        // Longer pause between paragraphs
-        setTimeout(typeNextWord, 500);
+
+      const user = data.user;
+      if (!user) {
+        this.currentUserId = null;
+        this.currentUserName = null;
+        return;
+      }
+
+      this.currentUserId = user.id;
+
+      // Try to load profile.full_name first
+      let fullName: string | null = null;
+      try {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user.id)
+          .maybeSingle();
+        if (profile && typeof profile.full_name === 'string' && profile.full_name.trim()) {
+          fullName = profile.full_name.trim();
+        }
+      } catch {
+        // ignore profile errors
+      }
+
+      if (!fullName) {
+        const metaName = (user.user_metadata as any)?.full_name as string | undefined;
+        if (metaName && metaName.trim()) {
+          fullName = metaName.trim();
+        } else if (user.email) {
+          // Fallback: use the part of the email before @ so header still shows a greeting
+          fullName = user.email.split('@')[0] ?? null;
+        }
+      }
+
+      this.currentUserName = fullName;
+    } finally {
+      // If we already have a valid session, don't leave the user stranded
+      // on auth-only pages – send them back to home.
+      if (
+        this.currentUserId &&
+        (this.currentPage === 'signin' || this.currentPage === 'signup')
+      ) {
+        this.currentPage = 'main';
+        window.location.hash = 'main';
+      }
+      // Re-render header/page with updated auth state
+      this.render();
+    }
+  }
+
+  private attachSignInListeners(): void {
+    const form = this.appElement.querySelector<HTMLFormElement>('.auth-form');
+    const googleBtn = this.appElement.querySelector<HTMLButtonElement>('.auth-google-btn');
+    const errorEl = this.appElement.querySelector<HTMLElement>('#auth-error');
+    if (!form) return;
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (errorEl) {
+        errorEl.textContent = '';
+      }
+      const emailInput = form.querySelector<HTMLInputElement>('input[type="email"]');
+      const passwordInput = form.querySelector<HTMLInputElement>('input[type="password"]');
+      if (!emailInput || !passwordInput) return;
+
+      const email = emailInput.value.trim();
+      const password = passwordInput.value;
+      if (!email || !password) {
+        if (errorEl) {
+          errorEl.textContent = 'Please enter both email and password.';
+        }
+        return;
+      }
+
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      // Always refresh auth state so we know for sure if there is a session
+      await this.refreshAuthState();
+
+      if (!this.currentUserId) {
+        // No valid session after attempting sign-in → stay on page and show error
+        if (errorEl) {
+          errorEl.textContent =
+            error?.message || 'Email or password is incorrect.';
+        }
+        return;
+      }
+
+      // If we do have a session (user is signed in), force navigation to home
+      this.currentPage = 'main';
+      window.location.hash = 'main';
+      this.render();
+    });
+
+    if (googleBtn) {
+      googleBtn.addEventListener('click', async () => {
+        if (errorEl) {
+          errorEl.textContent = '';
+        }
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            // Use origin+pathname so Supabase can append ?code=... and we still
+            // land back on this SPA (hash routing continues to work afterward).
+            redirectTo: `${window.location.origin}${window.location.pathname}`
+          }
+        });
+        if (error) {
+          if (errorEl) {
+            errorEl.textContent = 'Google sign-in failed. Please try again.';
+          }
+        }
+      });
+    }
+  }
+
+  private attachSignUpListeners(): void {
+    const form = this.appElement.querySelector<HTMLFormElement>('.auth-form');
+    if (!form) return;
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fullNameInput = form.querySelector<HTMLInputElement>('input[type="text"]');
+      const emailInput = form.querySelector<HTMLInputElement>('input[type="email"]');
+      const passwordInput = form.querySelector<HTMLInputElement>('input[type="password"]');
+      if (!emailInput || !passwordInput) return;
+
+      const email = emailInput.value.trim();
+      const password = passwordInput.value;
+      const fullName = fullNameInput?.value.trim() ?? '';
+      if (!email || !password) return;
+
+      const { data, error } = await supabase.auth.signUp({ email, password });
+      if (error) {
+        // eslint-disable-next-line no-alert
+        alert(error.message);
+        return;
+      }
+      // Store full name in profiles table if provided
+      if (data.user && fullName) {
+        try {
+          await supabase
+            .from('profiles')
+            .upsert({ id: data.user.id, full_name: fullName }, { onConflict: 'id' });
+        } catch {
+          // ignore profile errors in UI
+        }
+      }
+      await this.refreshAuthState();
+      // After successful sign-up, force navigation to home (main page)
+      this.currentPage = 'main';
+      window.location.hash = 'main';
+      this.render();
+    });
+  }
+
+  private attachProfileListeners(): void {
+    // (Logout handled globally in attachEventListeners)
+  }
+
+  private async attachDemoEventListeners(): Promise<void> {
+    const viewerSection = this.appElement.querySelector('#viewer-section') as HTMLElement | null;
+    const container = this.appElement.querySelector('#model-display') as HTMLElement | null;
+    if (!container) return;
+    if (viewerSection) {
+      viewerSection.style.display = 'block';
+    }
+
+    const viewer = await this.ensureThreeViewer(container);
+    if (!viewer) return;
+
+    const planModal = this.appElement.querySelector('#plan-modal') as HTMLElement | null;
+    const modalBackdrop = planModal?.querySelector('.plan-modal__backdrop') as HTMLElement | null;
+    const modalCloseBtn = this.appElement.querySelector('#close-plan-modal') as HTMLButtonElement | null;
+    const modalOpenBtn = this.appElement.querySelector('#open-plan-modal') as HTMLButtonElement | null;
+    const planButtons = Array.from(this.appElement.querySelectorAll<HTMLButtonElement>('#plan-modal .plan-card'));
+    const furnitureButtons = Array.from(this.appElement.querySelectorAll<HTMLButtonElement>('.furniture-card'));
+    const clearFurnitureBtn = this.appElement.querySelector('#clear-furniture') as HTMLButtonElement | null;
+    const placedPanel = this.appElement.querySelector('#placed-furniture-panel') as HTMLElement | null;
+    const placedList = this.appElement.querySelector('#placed-furniture-list') as HTMLElement | null;
+    const placedCount = this.appElement.querySelector('#placed-furniture-count') as HTMLElement | null;
+    const moveBtn = this.appElement.querySelector('#move-furniture-btn') as HTMLButtonElement | null;
+    const rotateLeftBtn = this.appElement.querySelector('#rotate-left-btn') as HTMLButtonElement | null;
+    const rotateRightBtn = this.appElement.querySelector('#rotate-right-btn') as HTMLButtonElement | null;
+    const selectionControls = this.appElement.querySelector('#selection-controls') as HTMLElement | null;
+    const selectionMoveBtn = this.appElement.querySelector('#selection-move') as HTMLButtonElement | null;
+    const selectionRotateLeftBtn = this.appElement.querySelector('#selection-rotate-left') as HTMLButtonElement | null;
+    const selectionRotateRightBtn = this.appElement.querySelector('#selection-rotate-right') as HTMLButtonElement | null;
+    const selectionDeleteBtn = this.appElement.querySelector('#selection-delete') as HTMLButtonElement | null;
+    const selectionColorBtn = this.appElement.querySelector('#selection-color') as HTMLButtonElement | null;
+    const selectionColorPalette = this.appElement.querySelector('#selection-color-palette') as HTMLElement | null;
+    const selectionColorDot = this.appElement.querySelector('#selection-color-dot') as HTMLElement | null;
+    const planGate = this.appElement.querySelector('#plan-gate') as HTMLElement | null;
+
+    // If not signed in, show gate and disable plan selection
+    if (!this.currentUserId) {
+      planButtons.forEach(btn => btn.setAttribute('disabled', 'true'));
+      if (planGate) planGate.style.display = 'flex';
+    } else {
+      planButtons.forEach(btn => btn.removeAttribute('disabled'));
+      if (planGate) planGate.style.display = 'none';
+    }
+
+    viewer.setFurnitureCallbacks({
+      onUpdate: ({ items, selectedId, interaction }) => {
+        this.updatePlacedFurnitureUI({
+          items,
+          selectedId,
+          interaction,
+          panel: placedPanel,
+          list: placedList,
+          countEl: placedCount,
+          moveBtn,
+          rotateLeftBtn,
+          rotateRightBtn,
+          selectionControls,
+          selectionMoveBtn,
+          selectionRotateLeftBtn,
+          selectionRotateRightBtn,
+          selectionDeleteBtn,
+          selectionColorBtn,
+          selectionColorPalette,
+          selectionColorDot,
+          viewer,
+        });
+      }
+    });
+
+    // When the user starts zooming (mouse wheel / trackpad) anywhere in the viewer
+    // section, prevent the page from zooming/scrolling and clear any active
+    // furniture selection so the overlay controls don't get in the way.
+    if (viewerSection) {
+      const wheelHandler = (event: WheelEvent) => {
+        // Treat any wheel event here as an intent to zoom the 3D view.
+        // Prevent default so the page itself doesn't zoom/scroll.
+        event.preventDefault();
+        if (this.selectedFurnitureInstanceId) {
+          viewer.clearSelectedFurniture();
+        }
+      };
+      viewerSection.addEventListener('wheel', wheelHandler, { passive: false });
+    }
+
+    this.currentPlan = null;
+    this.currentPlanId = null;
+
+    const syncPlanSelection = () => {
+      const activeId = this.currentPlanId;
+      planButtons.forEach(btn => {
+        const matches = btn.getAttribute('data-plan') === activeId;
+        btn.classList.toggle('selected', matches);
+      });
+    };
+
+    const setModalState = (open: boolean) => {
+      if (!planModal) return;
+      planModal.classList.toggle('open', open);
+      planModal.setAttribute('aria-hidden', open ? 'false' : 'true');
+      if (open) {
+        syncPlanSelection();
       }
     };
-    
-    // Start typing after a brief pause
-    setTimeout(typeNextWord, 300);
+
+    const attemptCloseModal = () => {
+      if (!this.currentPlanId) return;
+      setModalState(false);
+    };
+
+    const applyFurnitureSelection = (id: DemoFurnitureId | null) => {
+      this.activeFurniture = id;
+      furnitureButtons.forEach(btn => {
+        const matches = btn.getAttribute('data-furniture') === id;
+        btn.classList.toggle('selected', matches);
+      });
+      viewer.setActiveFurniture(id);
+      const option = this.getFurnitureOption(id) ?? null;
+      this.updateFurnitureStatus(option);
+    };
+
+    const loadPlan = async (plan: DemoPlanConfig) => {
+      if (this.currentPlanId === plan.id) {
+        attemptCloseModal();
+        return;
+      }
+      this.currentPlanId = plan.id;
+      this.currentPlan = plan.plan;
+      if (plan.staticModelBase) {
+        await viewer.loadStaticHouseModel(plan.staticModelBase);
+      } else {
+        await viewer.loadPlan(plan.plan);
+      }
+      this.updateActivePlanSummary(plan);
+      applyFurnitureSelection(null);
+      syncPlanSelection();
+      setModalState(false);
+    };
+
+    viewer.clearFurniture();
+    applyFurnitureSelection(null);
+    this.updateActivePlanSummary(null);
+    setModalState(true);
+
+    planButtons.forEach(button => {
+      button.addEventListener('click', () => {
+        const planId = button.getAttribute('data-plan');
+        if (!planId) return;
+        const plan = this.demoPlans.find(entry => entry.id === planId);
+        if (!plan) return;
+        void loadPlan(plan);
+      });
+    });
+
+    furnitureButtons.forEach(button => {
+      button.addEventListener('click', () => {
+        if (!this.currentPlanId) {
+          setModalState(true);
+          return;
+        }
+        const furnitureId = button.getAttribute('data-furniture') as DemoFurnitureId | null;
+        if (!furnitureId) return;
+        const isActive = button.classList.contains('selected');
+        applyFurnitureSelection(isActive ? null : furnitureId);
+      });
+    });
+
+    // Allow ESC key to clear active furniture / interaction while on the demo page
+    if (this.escKeyHandler) {
+      window.removeEventListener('keydown', this.escKeyHandler);
+      this.escKeyHandler = null;
+    }
+
+    this.escKeyHandler = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      // If we're on a different page now, ignore
+      if (this.currentPage !== 'demo') return;
+      // Clear active furniture placement mode
+      if (this.activeFurniture) {
+        applyFurnitureSelection(null);
+      }
+      // Cancel any in-progress move or selection overlay
+      viewer.cancelInteraction();
+      if (this.selectedFurnitureInstanceId) {
+        viewer.clearSelectedFurniture();
+      }
+    };
+    window.addEventListener('keydown', this.escKeyHandler);
+
+    placedList?.addEventListener('click', (event) => {
+       const deleteTrigger = (event.target as HTMLElement).closest('.placed-furniture-delete') as HTMLElement | null;
+       if (deleteTrigger) {
+         const row = deleteTrigger.closest('.placed-furniture-item') as HTMLElement | null;
+         const furnitureId = row?.getAttribute('data-id');
+         if (!furnitureId) return;
+         viewer.cancelInteraction();
+         viewer.removeFurniture(furnitureId);
+         applyFurnitureSelection(null);
+         return;
+       }
+       const selectTrigger = (event.target as HTMLElement).closest('.placed-furniture-select') as HTMLElement | null;
+       if (!selectTrigger) return;
+       const row = selectTrigger.closest('.placed-furniture-item') as HTMLElement | null;
+       const furnitureId = row?.getAttribute('data-id');
+       if (!furnitureId) return;
+       applyFurnitureSelection(null);
+       viewer.cancelInteraction();
+       viewer.selectFurniture(furnitureId);
+     });
+
+    moveBtn?.addEventListener('click', () => {
+      if (!this.currentPlanId) return;
+      if (this.furnitureInteractionState === 'moving') {
+        viewer.cancelInteraction();
+      } else {
+        void viewer.beginMoveSelected();
+      }
+    });
+
+    rotateLeftBtn?.addEventListener('click', () => {
+      if (!this.currentPlanId || this.furnitureInteractionState === 'moving') return;
+      viewer.rotateSelected(-15);
+    });
+
+    rotateRightBtn?.addEventListener('click', () => {
+      if (!this.currentPlanId || this.furnitureInteractionState === 'moving') return;
+      viewer.rotateSelected(15);
+    });
+
+    clearFurnitureBtn?.addEventListener('click', () => {
+      if (!this.currentPlanId) return;
+      viewer.clearFurniture();
+      applyFurnitureSelection(null);
+    });
+
+    selectionMoveBtn?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (!this.currentPlanId || !this.selectedFurnitureInstanceId) return;
+      if (this.furnitureInteractionState === 'moving') {
+        viewer.cancelInteraction();
+      } else {
+        void viewer.beginMoveSelected();
+      }
+    });
+
+    selectionRotateLeftBtn?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (!this.currentPlanId || !this.selectedFurnitureInstanceId || this.furnitureInteractionState === 'moving') return;
+      viewer.rotateSelected(-15);
+    });
+
+    selectionRotateRightBtn?.addEventListener('click', (event) => {
+       event.stopPropagation();
+       if (!this.currentPlanId || !this.selectedFurnitureInstanceId || this.furnitureInteractionState === 'moving') return;
+       viewer.rotateSelected(15);
+     });
+
+    selectionDeleteBtn?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (!this.currentPlanId || !this.selectedFurnitureInstanceId) return;
+      viewer.cancelInteraction();
+      viewer.removeFurniture(this.selectedFurnitureInstanceId);
+      applyFurnitureSelection(null);
+    });
+
+    if (selectionColorBtn && selectionColorPalette) {
+      selectionColorBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (!this.currentPlanId || !this.selectedFurnitureInstanceId || this.furnitureInteractionState === 'moving') return;
+        selectionColorPalette.hidden = !selectionColorPalette.hidden;
+      });
+
+      const swatches = Array.from(selectionColorPalette.querySelectorAll<HTMLButtonElement>('[data-color]'));
+      swatches.forEach(swatch => {
+        swatch.addEventListener('click', (event) => {
+          event.stopPropagation();
+          if (!this.currentPlanId || !this.selectedFurnitureInstanceId) return;
+          const color = swatch.getAttribute('data-color');
+          if (!color) return;
+          if (color === '__default__') {
+            viewer.resetSelectedColors();
+          } else {
+            viewer.setSelectedColor(color);
+          }
+          const key = color === '__default__' ? '__default__' : color;
+          this.furnitureColorByInstance.set(this.selectedFurnitureInstanceId, key);
+          this.applyColorKeyToDot(selectionColorDot, key);
+          selectionColorPalette.hidden = true;
+        });
+      });
+    }
+
+    const maintainSelectionOverlay = () => {
+      if (!selectionControls || !selectionControls.isConnected) return;
+      if (!selectionControls.hidden && this.selectedFurnitureInstanceId && viewer) {
+        const snapshot = this.furnitureSnapshots.find(item => item.id === this.selectedFurnitureInstanceId);
+        if (snapshot) {
+          const screenPosition = viewer.projectToScreen(snapshot.position);
+          if (screenPosition) {
+            selectionControls.style.left = `${screenPosition.x}px`;
+            selectionControls.style.top = `${screenPosition.y}px`;
+          }
+        }
+      }
+      requestAnimationFrame(maintainSelectionOverlay);
+    };
+    requestAnimationFrame(maintainSelectionOverlay);
+
+    modalOpenBtn?.addEventListener('click', () => setModalState(true));
+    modalCloseBtn?.addEventListener('click', attemptCloseModal);
+    modalBackdrop?.addEventListener('click', attemptCloseModal);
+
+    this.appElement.addEventListener('click', (event) => {
+       if (this.furnitureInteractionState === 'moving') return;
+       const target = event.target as HTMLElement;
+       const clickedFurnitureControl = target.closest('.placed-furniture-item, .furniture-card, .placed-control-btn, .selection-controls, .selection-btn');
+       const clickedViewer = target.closest('.three-canvas');
+       if (clickedFurnitureControl || clickedViewer) return;
+       if (this.selectedFurnitureInstanceId) {
+         viewer.clearSelectedFurniture();
+       }
+    });
+  }
+
+  private updatePlacedFurnitureUI(params: {
+    items: FurnitureSnapshot[];
+    selectedId: string | null;
+    interaction: FurnitureInteractionState;
+    panel: HTMLElement | null;
+    list: HTMLElement | null;
+    countEl: HTMLElement | null;
+    moveBtn: HTMLButtonElement | null;
+    rotateLeftBtn: HTMLButtonElement | null;
+    rotateRightBtn: HTMLButtonElement | null;
+    selectionControls: HTMLElement | null;
+    selectionMoveBtn: HTMLButtonElement | null;
+    selectionRotateLeftBtn: HTMLButtonElement | null;
+    selectionRotateRightBtn: HTMLButtonElement | null;
+    selectionDeleteBtn: HTMLButtonElement | null;
+    selectionColorBtn: HTMLButtonElement | null;
+    selectionColorPalette: HTMLElement | null;
+    selectionColorDot: HTMLElement | null;
+    viewer: ThreeApartmentViewer | null;
+  }): void {
+    const {
+      items,
+      selectedId,
+      interaction,
+      panel,
+      list,
+      countEl,
+      moveBtn,
+      rotateLeftBtn,
+      rotateRightBtn,
+      selectionControls,
+      selectionMoveBtn,
+      selectionRotateLeftBtn,
+      selectionRotateRightBtn,
+      selectionDeleteBtn,
+      selectionColorBtn,
+      selectionColorPalette,
+      selectionColorDot,
+      viewer,
+    } = params;
+
+    this.furnitureSnapshots = items;
+    this.selectedFurnitureInstanceId = selectedId;
+    this.furnitureInteractionState = interaction;
+
+    // Ensure we have a color entry for each existing item; clear out removed ones.
+    const existingIds = new Set(items.map(item => item.id));
+    for (const id of Array.from(this.furnitureColorByInstance.keys())) {
+      if (!existingIds.has(id)) {
+        this.furnitureColorByInstance.delete(id);
+      }
+    }
+    for (const item of items) {
+      if (!this.furnitureColorByInstance.has(item.id)) {
+        this.furnitureColorByInstance.set(item.id, '__default__');
+      }
+    }
+
+    const hasItems = items.length > 0;
+    const hasSelection = !!selectedId;
+
+    // Update total furniture cost in the sidebar
+    const totalEl = this.appElement.querySelector('#furniture-total') as HTMLElement | null;
+    const summaryEl = this.appElement.querySelector('#furniture-summary') as HTMLElement | null;
+    const checkoutBtn = this.appElement.querySelector('#furniture-checkout') as HTMLButtonElement | null;
+
+    let total = 0;
+    const counts = new Map<DemoFurnitureId, number>();
+    for (const item of items) {
+      const option = this.demoFurnitureOptions.find(o => o.id === item.type);
+      if (!option) continue;
+      // Prices are stored as strings like "₾1,200" – strip non-digits
+      const numeric = parseFloat(option.price.replace(/[^\d.]/g, ''));
+      if (!Number.isNaN(numeric)) {
+        total += numeric;
+      }
+      counts.set(item.type, (counts.get(item.type) ?? 0) + 1);
+    }
+
+    if (totalEl) {
+      const formatted = total ? `₾${total.toLocaleString('en-US')}` : '₾0';
+      totalEl.textContent = `Total: ${formatted}`;
+    }
+
+    if (summaryEl) {
+      if (!hasItems) {
+        summaryEl.textContent = 'No items placed';
+      } else {
+        const parts: string[] = [];
+        for (const [type, count] of counts.entries()) {
+          const option = this.demoFurnitureOptions.find(o => o.id === type);
+          if (!option) continue;
+          parts.push(`${count} × ${option.name}`);
+        }
+        summaryEl.textContent = parts.join(', ');
+      }
+    }
+
+    if (checkoutBtn) {
+      checkoutBtn.disabled = !hasItems;
+      checkoutBtn.onclick = hasItems ? () => this.navigateTo('checkout') : null;
+    }
+
+    if (countEl) {
+      countEl.textContent = String(items.length);
+    }
+
+    if (panel) {
+      if (!hasItems) {
+        panel.setAttribute('data-state', 'empty');
+      } else if (interaction === 'moving') {
+        panel.setAttribute('data-state', 'moving');
+      } else if (hasSelection) {
+        panel.setAttribute('data-state', 'selected');
+      } else {
+        panel.setAttribute('data-state', 'populated');
+      }
+    }
+
+    if (list) {
+      list.innerHTML = '';
+      if (!hasItems) {
+        const empty = document.createElement('p');
+        empty.className = 'placed-furniture-empty';
+        empty.textContent = 'No furniture placed yet.';
+        list.appendChild(empty);
+      } else {
+        items.forEach(item => {
+          const row = document.createElement('div');
+          row.className = 'placed-furniture-item';
+          row.setAttribute('data-id', item.id);
+          if (item.id === selectedId) {
+            row.classList.add('selected');
+          }
+
+          const selectButton = document.createElement('button');
+          selectButton.type = 'button';
+          selectButton.className = 'placed-furniture-select';
+          const rotationDeg = Math.round(((item.rotation * 180) / Math.PI + 360) % 360);
+          selectButton.innerHTML = `
+            <span class="placed-furniture-label">${item.label}</span>
+            <span class="placed-furniture-meta">${rotationDeg}&deg;</span>
+          `;
+
+          const deleteButton = document.createElement('button');
+          deleteButton.type = 'button';
+          deleteButton.className = 'placed-furniture-delete';
+          deleteButton.setAttribute('aria-label', `Delete ${item.label}`);
+          deleteButton.innerHTML = '&times;';
+
+          row.appendChild(selectButton);
+          row.appendChild(deleteButton);
+          list.appendChild(row);
+        });
+      }
+    }
+
+    if (moveBtn) {
+      const isMoving = interaction === 'moving';
+      moveBtn.disabled = !hasSelection && !isMoving;
+      moveBtn.textContent = isMoving ? 'Cancel move' : 'Move';
+      moveBtn.setAttribute('aria-pressed', isMoving ? 'true' : 'false');
+    }
+
+    const rotateDisabled = !hasSelection || interaction === 'moving';
+    if (rotateLeftBtn) rotateLeftBtn.disabled = rotateDisabled;
+    if (rotateRightBtn) rotateRightBtn.disabled = rotateDisabled;
+
+    if (selectionControls) {
+      selectionControls.classList.toggle('moving', interaction === 'moving');
+      if (!hasSelection || !viewer || interaction === 'moving') {
+        selectionControls.hidden = true;
+      } else {
+        const snapshot = items.find(item => item.id === selectedId);
+        if (!snapshot) {
+          selectionControls.hidden = true;
+        } else {
+          const screenPosition = viewer.projectToScreen(snapshot.position);
+          if (!screenPosition) {
+            selectionControls.hidden = true;
+          } else {
+            selectionControls.hidden = false;
+            selectionControls.style.left = `${screenPosition.x}px`;
+            selectionControls.style.top = `${screenPosition.y}px`;
+          }
+        }
+      }
+    }
+
+    if (selectionMoveBtn) {
+      selectionMoveBtn.disabled = !hasSelection;
+      selectionMoveBtn.classList.toggle('active', interaction === 'moving');
+      selectionMoveBtn.setAttribute('aria-pressed', interaction === 'moving' ? 'true' : 'false');
+    }
+
+    if (selectionRotateLeftBtn) {
+      selectionRotateLeftBtn.disabled = !hasSelection || interaction === 'moving';
+    }
+
+    if (selectionRotateRightBtn) {
+      selectionRotateRightBtn.disabled = !hasSelection || interaction === 'moving';
+    }
+
+    if (selectionDeleteBtn) {
+      selectionDeleteBtn.disabled = !hasSelection || interaction === 'moving';
+    }
+
+    if (selectionColorBtn) {
+      selectionColorBtn.disabled = !hasSelection || interaction === 'moving';
+    }
+
+    if ((!hasSelection || interaction === 'moving') && selectionColorPalette) {
+      selectionColorPalette.hidden = true;
+    }
+
+    if (selectionColorDot) {
+      if (!hasSelection) {
+        this.applyColorKeyToDot(selectionColorDot, '__default__');
+      } else {
+        const key = this.furnitureColorByInstance.get(selectedId!) ?? '__default__';
+        this.applyColorKeyToDot(selectionColorDot, key);
+      }
+    }
+  }
+
+  private applyColorKeyToDot(dot: HTMLElement | null, key: string): void {
+    if (!dot) return;
+    const { background, boxShadow } = this.colorCssForKey(key);
+    dot.style.background = background;
+    dot.style.boxShadow = boxShadow ?? '';
+    dot.title = this.describeColorKey(key);
+  }
+
+  private colorCssForKey(key: string): { background: string; boxShadow?: string } {
+    switch (key) {
+      case '__default__':
+        return {
+          background: 'linear-gradient(135deg, #c28b5c 0%, #f5f5f5 50%, #888888 100%)',
+          boxShadow: '0 0 0 1px rgba(0, 0, 0, 0.35) inset',
+        };
+      case '#ffffff':
+        return { background: '#f5f5f5' };
+      case '#d0d0d0':
+        return { background: '#d0d0d0' };
+      case '#888888':
+        return { background: '#888888' };
+      case '#333333':
+        return { background: '#333333' };
+      case '#c28b5c':
+        return { background: '#c28b5c' };
+      default:
+        return { background: '#aaaaaa' };
+    }
+  }
+
+  private describeColorKey(key: string): string {
+    switch (key) {
+      case '__default__':
+        return 'Default';
+      case '#ffffff':
+        return 'White';
+      case '#d0d0d0':
+        return 'Light grey';
+      case '#888888':
+        return 'Mid grey';
+      case '#333333':
+        return 'Dark grey';
+      case '#c28b5c':
+        return 'Warm wood';
+      default:
+        return 'Custom';
+    }
   }
 
   private attachRoofActionListeners(): void {
@@ -1530,8 +2170,13 @@ export class Router {
         const suggestionType = box.getAttribute('data-suggestion');
         const suggestionName = box.getAttribute('title');
         
-        // Change house color based on suggestion
-        this.applyMaterialToModel(suggestionType);
+        // Apply materials: if Three viewer exists, change floor material; else fallback
+        const floorMaterialKey = this.mapSuggestionToFloor(suggestionType);
+        if (this.threeViewer && floorMaterialKey) {
+          this.threeViewer.applyMaterialToFloors(floorMaterialKey);
+        } else {
+          this.applyMaterialToModel(suggestionType);
+        }
         
         // Add message to chat indicating selection
         if (suggestionName) {
@@ -1539,6 +2184,20 @@ export class Router {
         }
       });
     });
+  }
+
+  private mapSuggestionToFloor(suggestionType: string | null): 'wood' | 'tile' | 'concrete' | 'default' | null {
+    if (!suggestionType) return null;
+    switch (suggestionType) {
+      case 'gorgia-green':
+        return 'tile';
+      case 'gorgia-red':
+        return 'wood';
+      case 'mihouse-orange':
+        return 'concrete';
+      default:
+        return 'default';
+    }
   }
 
   private applyMaterialToModel(suggestionType: string | null): void {

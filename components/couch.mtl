@@ -1,0 +1,41 @@
+# Sofa materials – color‑only, no textures
+
+newmtl fabric
+Ns 40.0
+Ka 1.0 1.0 1.0
+Kd 0.70 0.70 0.72      # soft light grey fabric
+Ks 0.10 0.10 0.10
+Ke 0.0 0.0 0.0
+Ni 1.45
+d 1.0
+illum 2
+
+newmtl metal
+Ns 80.0
+Ka 1.0 1.0 1.0
+Kd 0.20 0.20 0.22      # dark grey metal legs/base
+Ks 0.30 0.30 0.30
+Ke 0.0 0.0 0.0
+Ni 1.45
+d 1.0
+illum 2
+
+newmtl pillow_black
+Ns 40.0
+Ka 1.0 1.0 1.0
+Kd 0.10 0.10 0.12      # nearly black pillows
+Ks 0.10 0.10 0.10
+Ke 0.0 0.0 0.0
+Ni 1.45
+d 1.0
+illum 2
+
+newmtl pillow_brown
+Ns 40.0
+Ka 1.0 1.0 1.0
+Kd 0.40 0.25 0.15      # warm brown pillows
+Ks 0.10 0.10 0.10
+Ke 0.0 0.0 0.0
+Ni 1.45
+d 1.0
+illum 2
