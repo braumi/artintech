@@ -219,7 +219,7 @@ export class Router {
   private updateFurnitureStatus(option: DemoFurnitureOption | null): void {
     const label = this.appElement.querySelector('#selected-furniture-label') as HTMLElement | null;
     if (!label) return;
-    label.textContent = option ? `${option.name} - ${option.footprint}` : 'None';
+    label.textContent = option ? `${option.name}` : 'None';
   }
 
   private async ensureThreeViewer(container: HTMLElement): Promise<ThreeApartmentViewer | null> {
@@ -381,6 +381,58 @@ export class Router {
     this.logoutControllers.forEach(c => c.abort());
     this.logoutControllers = [];
     this.activeFurniture = null;
+  }
+
+  private initMouseFollower(): void {
+    // Stub method for mouse follower functionality
+    // TODO: Implement mouse follower animation if needed
+  }
+
+  private typeWordByWord(texts: string[], elementIds: string[], container: HTMLElement): void {
+    // Stub method for typing animation
+    // For now, just set the text content directly
+    texts.forEach((text, index) => {
+      if (elementIds[index]) {
+        const el = container.querySelector(`#${elementIds[index]}`) as HTMLElement | null;
+        if (el) {
+          el.textContent = text;
+        }
+      }
+    });
+  }
+
+  private addAIMessage(message: string): void {
+    // Stub method for adding AI messages to chat
+    // Find the chatbox messages container and add a message
+    const messagesContainer = this.appElement.querySelector('#chatbox-messages') as HTMLElement | null;
+    if (messagesContainer) {
+      const messageEl = document.createElement('div');
+      messageEl.className = 'chat-message ai-message';
+      messageEl.textContent = message;
+      messagesContainer.appendChild(messageEl);
+      // Scroll to bottom
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+  }
+
+  private addAIMessageWithFormatting(message: string): void {
+    // Stub method for adding formatted AI messages (with markdown-like formatting)
+    // For now, do basic replacement of **text** to <strong>text</strong> and [link](url) to <a>
+    const messagesContainer = this.appElement.querySelector('#chatbox-messages') as HTMLElement | null;
+    if (messagesContainer) {
+      const messageEl = document.createElement('div');
+      messageEl.className = 'chat-message ai-message';
+      
+      // Basic markdown-like formatting
+      let formattedMessage = message
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      
+      messageEl.innerHTML = formattedMessage;
+      messagesContainer.appendChild(messageEl);
+      // Scroll to bottom
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
   }
 
   private initHeroAnimation(): void {
