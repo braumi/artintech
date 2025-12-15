@@ -757,10 +757,10 @@ export class Router {
     const name = this.currentUserName ?? 'there';
     return `
       <div class="page auth-page profile-page">
-        <section class="auth-hero-fixed">
+        <section class="demo-hero-fixed">
           <img
-            src="./components/hero components/signin_background.png"
-            alt="Architectural sketch background"
+            src="./components/hero components/demo_background.png"
+            alt="Forest and mountains background"
           />
         </section>
         <main class="profile-shell">
