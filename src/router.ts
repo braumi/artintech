@@ -324,13 +324,6 @@ export class Router {
 
   private handleRouteChange(): void {
     const hash = (window.location.hash.slice(1) as PageName) || 'main';
-    // Prevent navigation to signup page - redirect to signin instead
-    if (hash === 'signup') {
-      window.location.hash = 'signin';
-      this.currentPage = 'signin';
-      this.render();
-      return;
-    }
     // Avoid double-render when navigateTo already updated currentPage and hash
     if (hash === this.currentPage) {
       return;
@@ -340,18 +333,6 @@ export class Router {
   }
 
   public navigateTo(page: PageName): void {
-    // Disable navigation to signup page - keep the function but prevent navigation
-    if (page === 'signup') {
-      // If we're on the sign in page, show the modal
-      if (this.currentPage === 'signin') {
-        const signupModal = this.appElement.querySelector<HTMLElement>('#signup-modal');
-        if (signupModal) {
-          signupModal.setAttribute('aria-hidden', 'false');
-          signupModal.style.display = 'block';
-        }
-      }
-      return; // Don't navigate to signup page
-    }
     this.currentPage = page;
     window.location.hash = page;
     this.render();
@@ -621,46 +602,19 @@ export class Router {
               </label>
               <p class="auth-error" id="auth-error" aria-live="polite"></p>
               <button type="submit" class="auth-primary-btn">Continue</button>
-              <button type="button" class="auth-secondary-btn" id="signup-disabled-btn">
+              <button type="button" class="auth-secondary-btn" data-page="signup">
                 Create a new account
               </button>
             </form>
-            <div class="auth-divider" style="display: none;">
+            <div class="auth-divider">
               <span>or</span>
             </div>
-            <button type="button" class="auth-google-btn" style="display: none;">
+            <button type="button" class="auth-google-btn">
               <span class="auth-google-icon"></span>
               <span>Continue with Google</span>
             </button>
           </section>
         </main>
-        <div class="signup-modal" id="signup-modal" aria-hidden="true">
-          <div class="signup-modal__backdrop"></div>
-          <div class="signup-modal__dialog" role="dialog" aria-modal="true">
-            <header class="signup-modal__header">
-              <h2>Contact Us to Sign Up</h2>
-              <button class="signup-modal__close" id="close-signup-modal" aria-label="Close">&times;</button>
-            </header>
-            <div class="signup-modal__content">
-              <p>If you want to sign up contact us:</p>
-              <div class="signup-modal__contact">
-                <div class="signup-modal__contact-item">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
-                  </svg>
-                  <span>+995 555 42 29 77</span>
-                </div>
-                <div class="signup-modal__contact-item">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
-                    <polyline points="22,6 12,13 2,6"/>
-                  </svg>
-                  <span>zarandiagiorgi54@gmail.com</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     `;
   }
@@ -1276,45 +1230,7 @@ export class Router {
     const form = this.appElement.querySelector<HTMLFormElement>('.auth-form');
     const googleBtn = this.appElement.querySelector<HTMLButtonElement>('.auth-google-btn');
     const errorEl = this.appElement.querySelector<HTMLElement>('#auth-error');
-    const signupBtn = this.appElement.querySelector<HTMLButtonElement>('#signup-disabled-btn');
-    const signupModal = this.appElement.querySelector<HTMLElement>('#signup-modal');
-    const closeSignupModal = this.appElement.querySelector<HTMLButtonElement>('#close-signup-modal');
-    const signupModalBackdrop = this.appElement.querySelector<HTMLElement>('.signup-modal__backdrop');
     if (!form) return;
-
-    // Intercept signup button click to show modal instead of navigating
-    if (signupBtn && signupModal) {
-      signupBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        signupModal.setAttribute('aria-hidden', 'false');
-        signupModal.style.display = 'block';
-      });
-    }
-
-    // Close modal handlers
-    const closeModal = () => {
-      if (signupModal) {
-        signupModal.setAttribute('aria-hidden', 'true');
-        signupModal.style.display = 'none';
-      }
-    };
-
-    if (closeSignupModal) {
-      closeSignupModal.addEventListener('click', closeModal);
-    }
-
-    if (signupModalBackdrop) {
-      signupModalBackdrop.addEventListener('click', closeModal);
-    }
-
-    // Close on ESC key
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && signupModal && signupModal.getAttribute('aria-hidden') === 'false') {
-        closeModal();
-      }
-    };
-    window.addEventListener('keydown', handleEsc);
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -1353,77 +1269,66 @@ export class Router {
       this.render();
     });
 
-    // Google sign-in is disabled - keep the code but don't attach listener
-    // if (googleBtn) {
-    //   googleBtn.addEventListener('click', async () => {
-    //     if (errorEl) {
-    //       errorEl.textContent = '';
-    //     }
-    //     const { error } = await supabase.auth.signInWithOAuth({
-    //       provider: 'google',
-    //       options: {
-    //         // Use origin+pathname so Supabase can append ?code=... and we still
-    //         // land back on this SPA (hash routing continues to work afterward).
-    //         redirectTo: `${window.location.origin}${window.location.pathname}`
-    //       }
-    //     });
-    //     if (error) {
-    //       if (errorEl) {
-    //         errorEl.textContent = 'Google sign-in failed. Please try again.';
-    //       }
-    //     }
-    //   });
-    // }
+    if (googleBtn) {
+      googleBtn.addEventListener('click', async () => {
+        if (errorEl) {
+          errorEl.textContent = '';
+        }
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            // Use origin+pathname so Supabase can append ?code=... and we still
+            // land back on this SPA (hash routing continues to work afterward).
+            redirectTo: `${window.location.origin}${window.location.pathname}`
+          }
+        });
+        if (error) {
+          if (errorEl) {
+            errorEl.textContent = 'Google sign-in failed. Please try again.';
+          }
+        }
+      });
+    }
   }
 
   private attachSignUpListeners(): void {
     const form = this.appElement.querySelector<HTMLFormElement>('.auth-form');
     if (!form) return;
 
-    // Signup is disabled - prevent form submission and redirect to signin
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      // Redirect to signin page instead
-      this.currentPage = 'signin';
-      window.location.hash = 'signin';
+      const fullNameInput = form.querySelector<HTMLInputElement>('input[type="text"]');
+      const emailInput = form.querySelector<HTMLInputElement>('input[type="email"]');
+      const passwordInput = form.querySelector<HTMLInputElement>('input[type="password"]');
+      if (!emailInput || !passwordInput) return;
+
+      const email = emailInput.value.trim();
+      const password = passwordInput.value;
+      const fullName = fullNameInput?.value.trim() ?? '';
+      if (!email || !password) return;
+
+      const { data, error } = await supabase.auth.signUp({ email, password });
+      if (error) {
+        // eslint-disable-next-line no-alert
+        alert(error.message);
+        return;
+      }
+      // Store full name in profiles table if provided
+      if (data.user && fullName) {
+        try {
+          await supabase
+            .from('profiles')
+            .upsert({ id: data.user.id, full_name: fullName }, { onConflict: 'id' });
+        } catch {
+          // ignore profile errors in UI
+        }
+      }
+      await this.refreshAuthState();
+      // After successful sign-up, force navigation to home (main page)
+      this.currentPage = 'main';
+      window.location.hash = 'main';
       this.render();
     });
-
-    // Original signup code kept but disabled:
-    // form.addEventListener('submit', async (e) => {
-    //   e.preventDefault();
-    //   const fullNameInput = form.querySelector<HTMLInputElement>('input[type="text"]');
-    //   const emailInput = form.querySelector<HTMLInputElement>('input[type="email"]');
-    //   const passwordInput = form.querySelector<HTMLInputElement>('input[type="password"]');
-    //   if (!emailInput || !passwordInput) return;
-
-    //   const email = emailInput.value.trim();
-    //   const password = passwordInput.value;
-    //   const fullName = fullNameInput?.value.trim() ?? '';
-    //   if (!email || !password) return;
-
-    //   const { data, error } = await supabase.auth.signUp({ email, password });
-    //   if (error) {
-    //     // eslint-disable-next-line no-alert
-    //     alert(error.message);
-    //     return;
-    //   }
-    //   // Store full name in profiles table if provided
-    //   if (data.user && fullName) {
-    //     try {
-    //       await supabase
-    //         .from('profiles')
-    //         .upsert({ id: data.user.id, full_name: fullName }, { onConflict: 'id' });
-    //     } catch {
-    //       // ignore profile errors in UI
-    //     }
-    //   }
-    //   await this.refreshAuthState();
-    //   // After successful sign-up, force navigation to home (main page)
-    //   this.currentPage = 'main';
-    //   window.location.hash = 'main';
-    //   this.render();
-    // });
   }
 
   private attachProfileListeners(): void {
