@@ -5,8 +5,10 @@ import type {
   ThreeApartmentViewer
 } from './three-viewer';
 import { supabase } from './supabaseClient';
+import * as THREE from 'three';
+import OpenAI from 'openai';
 
-export type PageName = 'main' | 'demo' | 'signin' | 'signup' | 'checkout' | 'profile';
+export type PageName = 'main' | 'product' | 'signin' | 'signup' | 'checkout' | 'profile';
 
 type DemoPlanStats = {
   area: number;
@@ -250,18 +252,22 @@ export class Router {
     const oauthError = params.get('error_description');
 
     if (oauthError) {
-      // eslint-disable-next-line no-console
       console.warn('OAuth error from provider:', oauthError);
       return;
     }
 
     if (!code) return;
 
+    console.log('OAuth callback detected, exchanging code for session...');
     try {
-      await supabase.auth.exchangeCodeForSession(code);
+      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+      if (error) {
+        console.error('Failed to exchange OAuth code for session:', error);
+        return;
+      }
+      console.log('OAuth session exchange successful:', data);
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn('Failed to exchange OAuth code for session', err);
+      console.error('Exception during OAuth code exchange:', err);
       return;
     }
 
@@ -282,7 +288,7 @@ export class Router {
 
     // Handle initial page load
     const hash = window.location.hash.slice(1) as PageName;
-    if (hash === 'demo' || hash === 'signin' || hash === 'signup' || hash === 'checkout' || hash === 'profile') {
+    if (hash === 'product' || hash === 'signin' || hash === 'signup' || hash === 'checkout' || hash === 'profile') {
       this.currentPage = hash;
     }
 
@@ -356,7 +362,7 @@ export class Router {
     } else if (this.currentPage === 'signin' || this.currentPage === 'signup') {
       document.body.classList.add('auth-background');
     } else {
-      // demo, checkout, profile pages use demo-background
+      // product, checkout, profile pages use demo-background
       document.body.classList.add('demo-background');
     }
   }
@@ -473,8 +479,8 @@ export class Router {
           <button class="nav-btn ${this.currentPage === 'main' ? 'active' : ''}" data-page="main">
             Main
           </button>
-          <button class="nav-btn ${this.currentPage === 'demo' ? 'active' : ''}" data-page="demo">
-            Demo
+          <button class="nav-btn ${this.currentPage === 'product' ? 'active' : ''}" data-page="product">
+            Product
           </button>
         </div>
         <button class="nav-signin" data-page="${authTargetPage}">${authLabel}</button>
@@ -485,7 +491,7 @@ export class Router {
         </button>
         <div class="nav-drawer" aria-hidden="true">
           <button class="nav-drawer__item" data-page="main">Main</button>
-          <button class="nav-drawer__item" data-page="demo">Demo</button>
+          <button class="nav-drawer__item" data-page="product">Product</button>
           <button class="nav-drawer__item" data-page="${authTargetPage}">${authLabel}</button>
         </div>
       </nav>
@@ -498,8 +504,8 @@ export class Router {
       case 'main':
         pageContent = this.getMainPageContent();
         break;
-      case 'demo':
-        pageContent = this.getDemoPageContent();
+      case 'product':
+        pageContent = this.getProductPageContent();
         break;
       case 'signin':
         pageContent = this.getSignInPageContent();
@@ -687,7 +693,7 @@ export class Router {
     const emptyState = `
       <div class="checkout-empty">
         <p>No furniture placed yet.</p>
-        <button type="button" class="auth-secondary-btn" data-page="demo">Back to demo</button>
+        <button type="button" class="auth-secondary-btn" data-page="product">Back to product</button>
       </div>
     `;
 
@@ -715,8 +721,8 @@ export class Router {
           <span id="checkout-total">₾0</span>
         </div>
         <div class="checkout-actions">
-          <button type="button" class="auth-secondary-btn" data-page="demo">
-            Back to demo
+          <button type="button" class="auth-secondary-btn" data-page="product">
+            Back to product
           </button>
           <button type="button" class="auth-primary-btn">
             Place order
@@ -738,7 +744,7 @@ export class Router {
             <div class="checkout-card checkout-panel">
               <h1 class="checkout-title">Checkout</h1>
               <p class="checkout-subtitle">
-                Every piece you placed is listed here. Adjust in the demo anytime.
+                Every piece you placed is listed here. Adjust in the product anytime.
               </p>
               ${listSkeleton}
             </div>
@@ -796,9 +802,9 @@ export class Router {
                   <div class="profile-plan-badge">Current</div>
                   <h3 class="profile-plan-name">Free</h3>
                   <div class="profile-plan-price">₾0</div>
-                  <p class="profile-plan-description">Explore the demo and basic furniture placement</p>
+                  <p class="profile-plan-description">Explore the product and basic furniture placement</p>
                   <ul class="profile-plan-features">
-                    <li>3D demo viewer</li>
+                    <li>3D product viewer</li>
                     <li>Furniture placement</li>
                     <li>Sample floor plans</li>
                   </ul>
@@ -845,7 +851,7 @@ export class Router {
     `;
   }
 
-  private getDemoPageContent(): string {
+  private getProductPageContent(): string {
     const planCards = this.demoPlans.map(plan => {
       const detailParts = [
         `${plan.stats.area} m2`,
@@ -895,11 +901,43 @@ export class Router {
         </section>
         <div class="demo-mobile-message">
           <div class="demo-mobile-card">
-            <h2>Demo unavailable on mobile</h2>
-            <p>Please use a desktop or larger screen to access the interactive demo.</p>
+            <h2>Product unavailable on mobile</h2>
+            <p>Please use a desktop or larger screen to access the interactive product.</p>
           </div>
         </div>
         <div class="demo-layout">
+          <button class="chat-reopen-btn" id="reopen-chat-panel" aria-label="Open AI Assistant" hidden>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span>AI</span>
+          </button>
+          <div class="chat-messaging-ui" id="chat-panel">
+            <div class="messaging-header">
+              <div class="messaging-header-info">
+                <span class="messaging-name">AI Assistant</span>
+                <span class="messaging-status">Online</span>
+              </div>
+              <button class="messaging-close-btn" id="close-chat-panel" aria-label="Close chat">&times;</button>
+            </div>
+            <div class="messaging-messages" id="chatbox-messages">
+              <div class="messaging-message ai-message">
+                <div class="message-bubble ai-bubble">
+                  <p>Hello! I'm your AI assistant. How can I help you with your floor plan today?</p>
+                  <span class="message-time">10:24 pm</span>
+                </div>
+              </div>
+            </div>
+            <div class="messaging-input-area">
+              <input type="text" id="chat-input" placeholder="Type a message..." />
+              <button type="button" id="chat-send" aria-label="Send message">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="22" y1="2" x2="11" y2="13"></line>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+              </button>
+            </div>
+          </div>
           <section class="demo-viewer">
             <div class="viewer-section" id="viewer-section">
               <div class="model-viewport">
@@ -976,7 +1014,6 @@ export class Router {
               <h2>Select a floor plan</h2>
               <p>Choose one of our sample layouts to explore in 3D.</p>
             </div>
-            <button class="plan-modal__close" id="close-plan-modal" aria-label="Close plan selector">&times;</button>
           </header>
           <div class="plan-modal__content">
             <div class="plan-grid">
@@ -998,7 +1035,7 @@ export class Router {
   }
 
   private attachEventListeners(): void {
-    // Any element with data-page acts as a router link (Main, Demo, Sign in, etc.)
+    // Any element with data-page acts as a router link (Main, Product, Sign in, etc.)
     const routeLinks = this.appElement.querySelectorAll<HTMLElement>('[data-page]');
     routeLinks.forEach(link => {
       link.addEventListener('click', (e) => {
@@ -1036,8 +1073,8 @@ export class Router {
     this.bindLogoutButtons();
 
     // Page-specific wiring
-    if (this.currentPage === 'demo') {
-      void this.attachDemoEventListeners();
+    if (this.currentPage === 'product') {
+      void this.attachProductEventListeners();
     } else if (this.currentPage === 'signin') {
       this.attachSignInListeners();
     } else if (this.currentPage === 'signup') {
@@ -1100,7 +1137,7 @@ export class Router {
         empty.className = 'checkout-empty';
         empty.innerHTML = `
           <p>No furniture placed yet.</p>
-          <button type="button" class="auth-secondary-btn" data-page="demo">Back to demo</button>
+          <button type="button" class="auth-secondary-btn" data-page="product">Back to product</button>
         `;
         list.appendChild(empty);
       } else {
@@ -1230,16 +1267,24 @@ export class Router {
     const form = this.appElement.querySelector<HTMLFormElement>('.auth-form');
     const googleBtn = this.appElement.querySelector<HTMLButtonElement>('.auth-google-btn');
     const errorEl = this.appElement.querySelector<HTMLElement>('#auth-error');
-    if (!form) return;
+    if (!form) {
+      console.error('Sign in form not found!');
+      return;
+    }
+    console.log('Sign in form found, attaching listeners...');
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
+      console.log('Sign in form submitted');
       if (errorEl) {
         errorEl.textContent = '';
       }
       const emailInput = form.querySelector<HTMLInputElement>('input[type="email"]');
       const passwordInput = form.querySelector<HTMLInputElement>('input[type="password"]');
-      if (!emailInput || !passwordInput) return;
+      if (!emailInput || !passwordInput) {
+        console.error('Email or password input not found');
+        return;
+      }
 
       const email = emailInput.value.trim();
       const password = passwordInput.value;
@@ -1250,7 +1295,9 @@ export class Router {
         return;
       }
 
+      console.log('Attempting sign in with email:', email);
       const { error } = await supabase.auth.signInWithPassword({ email, password });
+      console.log('Sign in result:', error ? 'Error: ' + error.message : 'Success');
       // Always refresh auth state so we know for sure if there is a session
       await this.refreshAuthState();
 
@@ -1271,18 +1318,29 @@ export class Router {
 
     if (googleBtn) {
       googleBtn.addEventListener('click', async () => {
+        console.log('Google sign-in button clicked');
         if (errorEl) {
           errorEl.textContent = '';
         }
-        const { error } = await supabase.auth.signInWithOAuth({
-          provider: 'google',
-          options: {
-            // Use origin+pathname so Supabase can append ?code=... and we still
-            // land back on this SPA (hash routing continues to work afterward).
-            redirectTo: `${window.location.origin}${window.location.pathname}`
+        try {
+          const { data, error } = await supabase.auth.signInWithOAuth({
+            provider: 'google',
+            options: {
+              // Use origin+pathname so Supabase can append ?code=... and we still
+              // land back on this SPA (hash routing continues to work afterward).
+              redirectTo: `${window.location.origin}${window.location.pathname}`
+            }
+          });
+          if (error) {
+            console.error('Google sign-in error:', error);
+            if (errorEl) {
+              errorEl.textContent = 'Google sign-in failed: ' + error.message;
+            }
+          } else {
+            console.log('Google sign-in initiated, redirecting...', data);
           }
-        });
-        if (error) {
+        } catch (err) {
+          console.error('Google sign-in exception:', err);
           if (errorEl) {
             errorEl.textContent = 'Google sign-in failed. Please try again.';
           }
@@ -1335,7 +1393,7 @@ export class Router {
     // (Logout handled globally in attachEventListeners)
   }
 
-  private async attachDemoEventListeners(): Promise<void> {
+  private async attachProductEventListeners(): Promise<void> {
     const viewerSection = this.appElement.querySelector('#viewer-section') as HTMLElement | null;
     const container = this.appElement.querySelector('#model-display') as HTMLElement | null;
     if (!container) return;
@@ -1348,7 +1406,6 @@ export class Router {
 
     const planModal = this.appElement.querySelector('#plan-modal') as HTMLElement | null;
     const modalBackdrop = planModal?.querySelector('.plan-modal__backdrop') as HTMLElement | null;
-    const modalCloseBtn = this.appElement.querySelector('#close-plan-modal') as HTMLButtonElement | null;
     const modalOpenBtn = this.appElement.querySelector('#open-plan-modal') as HTMLButtonElement | null;
     const planButtons = Array.from(this.appElement.querySelectorAll<HTMLButtonElement>('#plan-modal .plan-card'));
     const furnitureButtons = Array.from(this.appElement.querySelectorAll<HTMLButtonElement>('.furniture-card'));
@@ -1500,7 +1557,7 @@ export class Router {
       });
     });
 
-    // Allow ESC key to clear active furniture / interaction while on the demo page
+    // Allow ESC key to clear active furniture / interaction while on the product page
     if (this.escKeyHandler) {
       window.removeEventListener('keydown', this.escKeyHandler);
       this.escKeyHandler = null;
@@ -1509,7 +1566,7 @@ export class Router {
     this.escKeyHandler = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       // If we're on a different page now, ignore
-      if (this.currentPage !== 'demo') return;
+      if (this.currentPage !== 'product') return;
       // Clear active furniture placement mode
       if (this.activeFurniture) {
         applyFurnitureSelection(null);
@@ -1642,8 +1699,615 @@ export class Router {
     requestAnimationFrame(maintainSelectionOverlay);
 
     modalOpenBtn?.addEventListener('click', () => setModalState(true));
-    modalCloseBtn?.addEventListener('click', attemptCloseModal);
     modalBackdrop?.addEventListener('click', attemptCloseModal);
+
+    // Chat panel close/reopen functionality
+    const chatPanel = this.appElement.querySelector('#chat-panel') as HTMLElement | null;
+    const closeChatBtn = this.appElement.querySelector('#close-chat-panel') as HTMLButtonElement | null;
+    const reopenChatBtn = this.appElement.querySelector('#reopen-chat-panel') as HTMLButtonElement | null;
+    const demoLayout = this.appElement.querySelector('.demo-layout') as HTMLElement | null;
+    
+    const toggleChatPanel = () => {
+      if (!chatPanel) return;
+      
+      const isHidden = chatPanel.classList.contains('hidden');
+      
+      if (isHidden) {
+        // Open chat
+        chatPanel.classList.remove('hidden');
+        if (reopenChatBtn) {
+          reopenChatBtn.hidden = true;
+        }
+      } else {
+        // Close chat
+        chatPanel.classList.add('hidden');
+        if (reopenChatBtn) {
+          reopenChatBtn.hidden = false;
+        }
+      }
+    };
+
+    const closeChatPanel = () => {
+      if (chatPanel) {
+        chatPanel.classList.add('hidden');
+      }
+      if (reopenChatBtn) {
+        reopenChatBtn.hidden = false;
+      }
+    };
+    
+    closeChatBtn?.addEventListener('click', closeChatPanel);
+    reopenChatBtn?.addEventListener('click', toggleChatPanel);
+
+    // Chat input and send functionality
+    const chatInput = this.appElement.querySelector('#chat-input') as HTMLInputElement | null;
+    const chatSendBtn = this.appElement.querySelector('#chat-send') as HTMLButtonElement | null;
+    const messagesContainer = this.appElement.querySelector('#chatbox-messages') as HTMLElement | null;
+
+    // Initialize OpenAI client
+    const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
+    const openai = apiKey && apiKey !== 'your_api_key_here' ? new OpenAI({ apiKey, dangerouslyAllowBrowser: true }) : null;
+    
+    // Log API key status (for debugging)
+    if (!apiKey || apiKey === 'your_api_key_here') {
+      console.log('⚠️ OpenAI API key not configured. Using fallback pattern matching.');
+      console.log('To enable AI: Add VITE_OPENAI_API_KEY=sk-your-key to .env file');
+    } else {
+      console.log('✅ OpenAI API key found. AI chat enabled.');
+      console.log('Key preview:', apiKey.substring(0, 7) + '...' + apiKey.substring(apiKey.length - 4));
+    }
+    
+    // Store conversation history for context
+    const conversationHistory: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
+    
+    // Initialize system prompt
+    const systemPrompt = `You are a helpful AI assistant for an interior design and floor plan application. Your role is to help users design their spaces by placing furniture and answering questions about their floor plans.
+
+Available furniture types:
+- bed (Queen Bed)
+- chair (Accent Chair)
+- sofa (Modular Sofa)
+- dining (Dining Table)
+- coffee-table (Coffee Table)
+- plant (Fiddle Leaf Plant)
+
+Available colors: gray, white, black, light gray, dark gray, warm wood
+
+IMPORTANT: You can only place furniture if a floor plan is currently loaded. If the user asks to place furniture but no plan is loaded, politely let them know they need to select a floor plan first.
+
+When a user asks to place furniture (and a plan is loaded):
+1. Understand what furniture they want (type, quantity, color if specified)
+2. Use the placeFurniture function to place it
+3. Respond with friendly, encouraging messages about how it will look in their space
+
+You can also:
+- Answer questions about interior design
+- Provide design suggestions and tips
+- Help users understand their space better
+- Have natural, engaging conversations about interior design
+- Answer questions about furniture, colors, and layout
+
+Be friendly, helpful, enthusiastic, and conversational. Make your responses feel natural and engaging, not robotic.`;
+
+    if (openai) {
+      conversationHistory.push({ role: 'system', content: systemPrompt });
+    }
+
+    const getCurrentTime = () => {
+      const now = new Date();
+      const hours = now.getHours();
+      const minutes = now.getMinutes();
+      const ampm = hours >= 12 ? 'pm' : 'am';
+      const displayHours = hours % 12 || 12;
+      const displayMinutes = minutes < 10 ? `0${minutes}` : minutes;
+      return `${displayHours}:${displayMinutes} ${ampm}`;
+    };
+
+    // Set initial message time and scroll to bottom
+    const initialTimeEl = this.appElement.querySelector('#initial-message-time') as HTMLElement | null;
+    if (initialTimeEl) {
+      initialTimeEl.textContent = getCurrentTime();
+    }
+    // Scroll messages container to top (bottom in column-reverse) on initial load
+    if (messagesContainer) {
+      setTimeout(() => {
+        messagesContainer.scrollTop = 0;
+      }, 0);
+    }
+
+    // Parse furniture command from user message - can handle multiple items
+    const parseFurnitureCommand = (message: string): Array<{ type: DemoFurnitureId; quantity: number; color: string | null }> | null => {
+      const lowerMessage = message.toLowerCase();
+      
+      // Remove "please" prefix if present
+      const cleanedMessage = lowerMessage.replace(/^please\s+/i, '');
+      
+      // Check if it's a placement command
+      const isPlaceCommand = cleanedMessage.includes('place') || cleanedMessage.includes('add') || cleanedMessage.includes('put');
+      if (!isPlaceCommand) return null;
+      
+      // Map color names to hex values
+      const colorMap: Record<string, string> = {
+        'gray': '#888888',
+        'grey': '#888888',
+        'white': '#ffffff',
+        'black': '#333333',
+        'light grey': '#d0d0d0',
+        'light gray': '#d0d0d0',
+        'mid grey': '#888888',
+        'mid gray': '#888888',
+        'dark grey': '#333333',
+        'dark gray': '#333333',
+        'warm wood': '#c28b5c',
+      };
+      
+      // Map furniture names to IDs - order matters! More specific names first
+      const furnitureMap: Record<string, DemoFurnitureId> = {
+        'coffee table': 'coffee-table',
+        'coffee tables': 'coffee-table',
+        'dining table': 'dining',
+        'dining tables': 'dining',
+        'bed': 'bed',
+        'beds': 'bed',
+        'chair': 'chair',
+        'chairs': 'chair',
+        'sofa': 'sofa',
+        'sofas': 'sofa',
+        'couch': 'sofa',
+        'couches': 'sofa',
+        'table': 'dining',
+        'tables': 'dining',
+        'plant': 'plant',
+        'plants': 'plant',
+      };
+      
+      const results: Array<{ type: DemoFurnitureId; quantity: number; color: string | null }> = [];
+      
+      // Split by common separators (and, comma, etc.) to handle multiple items
+      const parts = cleanedMessage.split(/(?:\s+and\s+|\s*,\s*|\s+(?=\d+\s*(?:chair|bed|sofa|couch|table|plant)))/i);
+      
+      for (const part of parts) {
+        // Extract quantity (default to 1 if no number found)
+        const quantityMatch = part.match(/(\d+)\s*(?:x|×)?\s*(?:chair|bed|sofa|couch|table|plant|coffee-table|dining)/);
+        const quantity = quantityMatch ? parseInt(quantityMatch[1], 10) : 1;
+        
+        // Extract color for this specific item
+        let color: string | null = null;
+        for (const [colorName, hexValue] of Object.entries(colorMap)) {
+          if (part.includes(colorName)) {
+            color = hexValue;
+            break;
+          }
+        }
+        
+        // Extract furniture type - check in order (more specific first)
+        let furnitureType: DemoFurnitureId | null = null;
+        // Sort entries by length (longer/more specific first) to match "coffee table" before "table"
+        const sortedEntries = Object.entries(furnitureMap).sort((a, b) => b[0].length - a[0].length);
+        for (const [name, id] of sortedEntries) {
+          if (part.includes(name)) {
+            furnitureType = id;
+            break;
+          }
+        }
+        
+        if (furnitureType) {
+          results.push({ type: furnitureType, quantity, color });
+        }
+      }
+      
+      return results.length > 0 ? results : null;
+    };
+
+    // Place furniture at random positions around center
+    const placeFurnitureItems = async (type: DemoFurnitureId, quantity: number, color: string | null): Promise<void> => {
+      if (!viewer || !this.currentPlanId) return;
+      
+      // Set active furniture type
+      viewer.setActiveFurniture(type);
+      
+      const viewerInternal = viewer as any;
+      const furnitureGroup = viewerInternal.furnitureGroup;
+      const furnitureItems = viewerInternal.furnitureItems;
+      
+      if (!furnitureGroup || !furnitureItems) return;
+      
+      // Get center point - try to get floor intersection at center of viewport
+      // If that fails, use a default center point
+      let centerPoint: THREE.Vector3 | null = null;
+      
+      // Try to raycast from center of screen to get floor intersection
+      if (viewerInternal.raycaster && viewerInternal.camera) {
+        const centerPointer = new THREE.Vector2(0, 0); // Center of screen in normalized coordinates
+        viewerInternal.raycaster.setFromCamera(centerPointer, viewerInternal.camera);
+        centerPoint = viewerInternal.intersectFloor();
+      }
+      
+      // Fallback to center origin if raycast fails
+      if (!centerPoint) {
+        centerPoint = new THREE.Vector3(0, 0, 0);
+      }
+      
+      const radius = 2.5; // Random placement radius around center
+      
+      for (let i = 0; i < quantity; i++) {
+        // Generate random position around center
+        const angle = Math.random() * Math.PI * 2;
+        const distance = Math.random() * radius;
+        const x = centerPoint.x + Math.cos(angle) * distance;
+        const z = centerPoint.z + Math.sin(angle) * distance;
+        
+        // Create position at same Y as center (floor level)
+        const position = new THREE.Vector3(x, centerPoint.y, z);
+        
+        // Create furniture item
+        const item = await viewerInternal.createFurnitureItem(type);
+        
+        // Position furniture
+        const placed = viewerInternal.positionFurniture(item, position);
+        if (!placed) {
+          viewerInternal.disposeObject(item.object);
+          continue;
+        }
+        
+        // Add to scene
+        furnitureGroup.add(item.object);
+        furnitureItems.set(item.id, item);
+        viewerInternal.tagFurnitureObject(item);
+        
+        // Apply color if specified using the existing color palette system
+        if (color) {
+          // Select the furniture item first
+          viewerInternal.selectFurnitureInternal(item.id, true);
+          // Apply color using the existing system (which handles furniture-specific coloring)
+          viewer.setSelectedColor(color);
+          // Store the color mapping
+          this.furnitureColorByInstance.set(item.id, color);
+          // Deselect after applying color
+          viewerInternal.selectFurnitureInternal(null, true);
+        }
+      }
+      
+      // Clear active furniture selection to remove preview/ghost furniture
+      viewer.setActiveFurniture(null);
+      
+      // Emit update
+      viewerInternal.emitFurnitureUpdate();
+    };
+
+    const sendChatMessage = async () => {
+      if (!chatInput || !messagesContainer) return;
+      const message = chatInput.value.trim();
+      if (!message) return;
+
+      // Add user message
+      const userMessage = document.createElement('div');
+      userMessage.className = 'messaging-message user-message';
+      userMessage.innerHTML = `
+        <div class="message-bubble user-bubble">
+          <p>${message}</p>
+          <span class="message-time">${getCurrentTime()}</span>
+        </div>
+      `;
+      messagesContainer.insertBefore(userMessage, messagesContainer.firstChild);
+      // Scroll to top (which is bottom in column-reverse) to show new message
+      setTimeout(() => {
+        messagesContainer.scrollTop = 0;
+      }, 0);
+
+      // Clear input
+      chatInput.value = '';
+
+      // Add typing indicator
+      const typingIndicator = document.createElement('div');
+      typingIndicator.className = 'messaging-message ai-message';
+      typingIndicator.id = 'typing-indicator';
+      typingIndicator.innerHTML = `
+        <div class="message-bubble ai-bubble">
+          <div class="typing-indicator">
+            <div class="typing-dots">
+              <div class="typing-dot"></div>
+              <div class="typing-dot"></div>
+              <div class="typing-dot"></div>
+            </div>
+          </div>
+        </div>
+      `;
+      messagesContainer.insertBefore(typingIndicator, messagesContainer.firstChild);
+      messagesContainer.scrollTop = 0;
+
+      // Add user message to conversation history
+      if (openai) {
+        conversationHistory.push({ role: 'user', content: message });
+      }
+      
+      // Try AI first, fallback to pattern matching
+      try {
+        if (openai) {
+          // Use OpenAI - always use AI if available, but only allow furniture placement if plan is selected
+          const tools = this.currentPlanId ? [
+            {
+              type: 'function' as const,
+              function: {
+                name: 'placeFurniture',
+                description: 'Place furniture items in the 3D floor plan. Use this when the user wants to add furniture to their space. Only use this if a floor plan is currently loaded.',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    items: {
+                      type: 'array',
+                      description: 'Array of furniture items to place',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          type: {
+                            type: 'string',
+                            enum: ['bed', 'chair', 'sofa', 'dining', 'coffee-table', 'plant'],
+                            description: 'Type of furniture to place'
+                          },
+                          quantity: {
+                            type: 'number',
+                            description: 'Number of this furniture item to place (default: 1)',
+                            default: 1
+                          },
+                          color: {
+                            type: 'string',
+                            enum: ['gray', 'white', 'black', 'light gray', 'dark gray', 'warm wood'],
+                            description: 'Color of the furniture (optional)'
+                          }
+                        },
+                        required: ['type']
+                      }
+                    }
+                  },
+                  required: ['items']
+                }
+              }
+            }
+          ] : undefined;
+
+          const completion = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: conversationHistory as any,
+            ...(tools ? { tools, tool_choice: 'auto' } : {}),
+            temperature: 0.7,
+          });
+
+          const messageResponse = completion.choices[0]?.message;
+          let responseText = '';
+          let placedItems: string[] = [];
+
+          // Handle function call (tools format)
+          const toolCall = messageResponse?.tool_calls?.[0];
+          if (toolCall && toolCall.function.name === 'placeFurniture' && this.currentPlanId) {
+            try {
+              const args = JSON.parse(toolCall.function.arguments);
+              const furnitureLabels: Record<DemoFurnitureId, string> = {
+                'bed': 'bed',
+                'chair': 'chair',
+                'sofa': 'sofa',
+                'dining': 'dining table',
+                'coffee-table': 'coffee table',
+                'plant': 'plant',
+              };
+              
+              const colorMap: Record<string, string> = {
+                'gray': '#888888',
+                'grey': '#888888',
+                'white': '#ffffff',
+                'black': '#333333',
+                'light gray': '#d0d0d0',
+                'dark gray': '#333333',
+                'warm wood': '#c28b5c',
+              };
+
+              for (const item of args.items) {
+                const color = item.color ? colorMap[item.color] : null;
+                await placeFurnitureItems(item.type as DemoFurnitureId, item.quantity || 1, color);
+                
+                const furnitureName = furnitureLabels[item.type as DemoFurnitureId];
+                const colorText = item.color ? ` ${item.color}` : '';
+                const quantityText = (item.quantity || 1) > 1 ? `${item.quantity || 1} ` : 'a ';
+                const plural = (item.quantity || 1) > 1 ? 's' : '';
+                
+                placedItems.push(`${quantityText}${colorText} ${furnitureName}${plural}`);
+              }
+
+              // Clear active furniture
+              if (viewer) {
+                viewer.setActiveFurniture(null);
+              }
+
+              // Get AI's natural language response after placing furniture
+              const followUpCompletion = await openai.chat.completions.create({
+                model: 'gpt-4o-mini',
+                messages: [
+                  ...conversationHistory,
+                  messageResponse,
+                  {
+                    role: 'tool',
+                    tool_call_id: toolCall.id,
+                    content: JSON.stringify({ success: true, items: placedItems })
+                  }
+                ] as any,
+                temperature: 0.7,
+              });
+
+              responseText = followUpCompletion.choices[0]?.message?.content || `I've placed ${placedItems.join(', ')}. They will look great in your space!`;
+            } catch (error) {
+              console.error('Error placing furniture:', error);
+              responseText = "I'm sorry, I couldn't place that furniture. Please make sure you've selected a floor plan first.";
+            }
+          } else {
+            // Regular conversation - AI response
+            responseText = messageResponse?.content || "I'm here to help!";
+          }
+
+          // Add AI response to conversation history
+          conversationHistory.push({ role: 'assistant', content: responseText });
+
+          const existingTyping = document.getElementById('typing-indicator') as HTMLElement;
+          if (existingTyping) {
+            existingTyping.remove();
+          }
+
+          const aiMessage = document.createElement('div');
+          aiMessage.className = 'messaging-message ai-message';
+          aiMessage.innerHTML = `
+            <div class="message-bubble ai-bubble">
+              <p>${responseText}</p>
+              <span class="message-time">${getCurrentTime()}</span>
+            </div>
+          `;
+          messagesContainer.insertBefore(aiMessage, messagesContainer.firstChild);
+          messagesContainer.scrollTop = 0;
+        } else {
+          // Fallback to pattern matching if no AI or no plan selected
+          const command = parseFurnitureCommand(message);
+          
+          setTimeout(async () => {
+            const existingTyping = document.getElementById('typing-indicator') as HTMLElement;
+            if (existingTyping) {
+              existingTyping.remove();
+            }
+
+            let responseText = '';
+            
+            if (command && command.length > 0 && this.currentPlanId) {
+              // Place furniture for all items in command
+              try {
+                const furnitureLabels: Record<DemoFurnitureId, string> = {
+                  'bed': 'bed',
+                  'chair': 'chair',
+                  'sofa': 'sofa',
+                  'dining': 'dining table',
+                  'coffee-table': 'coffee table',
+                  'plant': 'plant',
+                };
+                
+                const getColorName = (hex: string): string => {
+                  const colorMap: Record<string, string> = {
+                    '#888888': 'gray',
+                    '#ffffff': 'white',
+                    '#333333': 'black',
+                    '#d0d0d0': 'light gray',
+                    '#c28b5c': 'warm wood',
+                  };
+                  return colorMap[hex] || 'colored';
+                };
+                
+                const placedItems: string[] = [];
+                let totalPlaced = 0;
+                
+                // Place each furniture item
+                for (const item of command) {
+                  await placeFurnitureItems(item.type, item.quantity, item.color);
+                  totalPlaced += item.quantity;
+                  
+                  const furnitureName = furnitureLabels[item.type];
+                  const colorText = item.color ? ` ${getColorName(item.color)}` : '';
+                  const quantityText = item.quantity > 1 ? `${item.quantity} ` : 'a ';
+                  const plural = item.quantity > 1 ? 's' : '';
+                  
+                  placedItems.push(`${quantityText}${colorText} ${furnitureName}${plural}`);
+                }
+                
+                // Clear active furniture after all placements to remove preview/ghost furniture
+                if (viewer) {
+                  viewer.setActiveFurniture(null);
+                }
+                
+                // Build response message with randomized friendly text
+                if (placedItems.length === 1) {
+                  const singleItemResponses = [
+                    `I've placed ${placedItems[0]}. It will look really great in your new home!`,
+                    `Perfect! I've placed ${placedItems[0]}. This will add a nice touch to your space.`,
+                    `Done! I've placed ${placedItems[0]}. It's going to look amazing in your design.`,
+                    `Great choice! I've placed ${placedItems[0]}. This will really enhance your floor plan.`,
+                    `I've placed ${placedItems[0]} as requested. It fits perfectly in your layout!`,
+                    `Excellent! I've placed ${placedItems[0]}. Your space is looking better already.`,
+                  ];
+                  responseText = singleItemResponses[Math.floor(Math.random() * singleItemResponses.length)];
+                } else {
+                  const lastItem = placedItems.pop();
+                  const itemsList = placedItems.join(', ') + (placedItems.length > 0 ? ', and ' : '') + lastItem;
+                  const multipleItemsResponses = [
+                    `I've placed ${itemsList}. They will look really great in your new home!`,
+                    `Perfect! I've placed ${itemsList}. These will add a nice touch to your space.`,
+                    `Done! I've placed ${itemsList}. They're going to look amazing in your design.`,
+                    `Great choices! I've placed ${itemsList}. These will really enhance your floor plan.`,
+                    `I've placed ${itemsList} as requested. They fit perfectly in your layout!`,
+                    `Excellent! I've placed ${itemsList}. Your space is looking better already.`,
+                  ];
+                  responseText = multipleItemsResponses[Math.floor(Math.random() * multipleItemsResponses.length)];
+                }
+              } catch (error) {
+                responseText = "I'm sorry, I couldn't place that furniture. Please make sure you've selected a floor plan first.";
+              }
+            } else if (command && command.length > 0 && !this.currentPlanId) {
+              responseText = "Please select a floor plan first before placing furniture.";
+            } else {
+              // Default responses for non-placement messages
+              const aiResponses = [
+                "I understand your question. Let me help you with that.",
+                "That's a great question! Based on your floor plan, I can provide some insights.",
+                "I'd be happy to assist you with that. Let me think about the best approach.",
+                "Thanks for asking! Here's what I can tell you about your design."
+              ];
+              responseText = aiResponses[Math.floor(Math.random() * aiResponses.length)];
+            }
+
+            const aiMessage = document.createElement('div');
+            aiMessage.className = 'messaging-message ai-message';
+            aiMessage.innerHTML = `
+              <div class="message-bubble ai-bubble">
+                <p>${responseText}</p>
+                <span class="message-time">${getCurrentTime()}</span>
+              </div>
+            `;
+            messagesContainer.insertBefore(aiMessage, messagesContainer.firstChild);
+            messagesContainer.scrollTop = 0;
+          }, 1500 + Math.random() * 1000);
+        }
+      } catch (error: any) {
+        console.error('Chat error:', error);
+        const existingTyping = document.getElementById('typing-indicator') as HTMLElement;
+        if (existingTyping) {
+          existingTyping.remove();
+        }
+        
+        // Remove user message from conversation history if AI failed
+        if (openai && conversationHistory.length > 0 && conversationHistory[conversationHistory.length - 1].role === 'user') {
+          conversationHistory.pop();
+        }
+        
+        let errorMessage = "I'm sorry, I encountered an error. Please try again.";
+        if (error?.message?.includes('API key')) {
+          errorMessage = "API key error. Please check your OpenAI API key in the .env file.";
+        } else if (error?.message?.includes('rate limit')) {
+          errorMessage = "Rate limit exceeded. Please wait a moment and try again.";
+        }
+        
+        const aiMessage = document.createElement('div');
+        aiMessage.className = 'messaging-message ai-message';
+        aiMessage.innerHTML = `
+          <div class="message-bubble ai-bubble">
+            <p>${errorMessage}</p>
+            <span class="message-time">${getCurrentTime()}</span>
+          </div>
+        `;
+        messagesContainer.insertBefore(aiMessage, messagesContainer.firstChild);
+        messagesContainer.scrollTop = 0;
+      }
+    };
+
+    chatSendBtn?.addEventListener('click', sendChatMessage);
+    chatInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendChatMessage();
+      }
+    });
 
     this.appElement.addEventListener('click', (event) => {
        if (this.furnitureInteractionState === 'moving') return;
@@ -1938,8 +2602,8 @@ export class Router {
     this.roofActionListener = (e) => {
       const target = e.target as HTMLElement;
       
-      // Only process if we're on the demo page and element exists in current DOM
-      if (this.currentPage !== 'demo' || !this.appElement.contains(target)) {
+      // Only process if we're on the product page and element exists in current DOM
+      if (this.currentPage !== 'product' || !this.appElement.contains(target)) {
         return;
       }
       
