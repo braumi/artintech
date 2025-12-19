@@ -303,139 +303,47 @@ export class Router {
       return true;
     }
 
-    // Check for OAuth tokens in hash (Supabase's detectSessionInUrl should handle this automatically)
-    // But we need to clean up the URL after Supabase processes it
+    // Check for OAuth tokens in hash
+    // Supabase's detectSessionInUrl should automatically process these tokens
+    // We just need to wait for it to process, then clean up the URL
     const hash = window.location.hash;
     if (hash && hash.includes('access_token=')) {
-      console.log('🔵 OAuth tokens detected in hash, processing...');
-      console.log('Full hash:', hash);
+      console.log('🔵 OAuth tokens detected in hash');
+      console.log('Supabase should automatically process these tokens (detectSessionInUrl: true)');
       
-      // Handle case where hash might be like "#signin#access_token=..." (double hash)
-      // Split by # and find the part that contains access_token
-      const hashParts = hash.split('#').filter(part => part.length > 0);
-      console.log('Hash parts:', hashParts);
+      // Give Supabase time to automatically process the tokens from the hash
+      // This is the same way email/password works - Supabase handles it automatically
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
-      // Find the part that contains access_token
-      let tokenString = '';
-      for (const part of hashParts) {
-        if (part.includes('access_token=')) {
-          tokenString = part;
-          break;
-        }
+      // Check if session was automatically set by Supabase
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError) {
+        console.error('❌ Error getting session after OAuth:', sessionError);
+        return false;
       }
       
-      // Fallback: if no part found, try the whole hash
-      if (!tokenString && hash.includes('access_token=')) {
-        // Try to extract from hash directly
-        const accessTokenIndex = hash.indexOf('access_token=');
-        if (accessTokenIndex >= 0) {
-          // Get everything from access_token= onwards, but might need to handle # in the middle
-          tokenString = hash.substring(accessTokenIndex);
-          // Remove any # that might be before access_token
-          if (tokenString.startsWith('#')) {
-            tokenString = tokenString.substring(1);
-          }
-        }
-      }
-      
-      console.log('Parsing token string:', tokenString.substring(0, 100) + '...');
-      
-      // Extract tokens from the token string
-      const hashParams = new URLSearchParams(tokenString);
-      
-      // Debug: log all parameters found
-      console.log('All hash parameters:', Array.from(hashParams.keys()));
-      
-      const accessToken = hashParams.get('access_token');
-      const refreshToken = hashParams.get('refresh_token');
-      
-      console.log('Tokens found:', { 
-        hasAccessToken: !!accessToken, 
-        hasRefreshToken: !!refreshToken,
-        accessTokenLength: accessToken?.length || 0,
-        refreshTokenLength: refreshToken?.length || 0,
-        accessTokenPreview: accessToken ? accessToken.substring(0, 20) + '...' : 'null',
-        refreshTokenPreview: refreshToken ? refreshToken.substring(0, 20) + '...' : 'null'
-      });
-      
-      if (accessToken && refreshToken) {
-        try {
-          // Set the session explicitly to ensure we get the correct user
-          console.log('Setting OAuth session...');
-          console.log('Access token length:', accessToken.length);
-          console.log('Refresh token length:', refreshToken.length);
-          
-          let sessionData;
-          try {
-            // Add timeout to prevent hanging
-            const setSessionPromise = supabase.auth.setSession({
-              access_token: accessToken,
-              refresh_token: refreshToken
-            });
-            
-            const timeoutPromise = new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('setSession timeout after 5 seconds')), 5000)
-            );
-            
-            const result = await Promise.race([setSessionPromise, timeoutPromise]) as any;
-            
-            if (result.error) {
-              console.error('❌ Failed to set OAuth session:', result.error);
-              console.error('Error details:', {
-                message: result.error.message,
-                status: result.error.status,
-                name: result.error.name
-              });
-              return false;
-            }
-            
-            sessionData = result.data;
-            console.log('✅ OAuth session set successfully');
-            console.log('Session data:', {
-              hasUser: !!sessionData.user,
-              userEmail: sessionData.user?.email,
-              userId: sessionData.user?.id
-            });
-          } catch (sessionError: any) {
-            console.error('❌ Exception setting OAuth session:', sessionError);
-            console.error('Error details:', {
-              message: sessionError?.message,
-              stack: sessionError?.stack
-            });
-            return false;
-          }
-          
-          // Update auth state first to set currentUserId
-          console.log('Refreshing auth state...');
-          try {
-            await this.refreshAuthState();
-            console.log('✅ Auth state refreshed, currentUserId:', this.currentUserId);
-          } catch (refreshError) {
-            console.error('❌ Error refreshing auth state:', refreshError);
-            // Continue anyway - we have the session
-          }
-          
-          // Clean the URL and navigate to main page
-          this.currentPage = 'main';
-          const cleanUrl = `${window.location.origin}${window.location.pathname}#main`;
-          window.history.replaceState({}, '', cleanUrl);
-          console.log('✅ URL cleaned, redirecting to main');
-          
-          // Force a full page render with the updated state
-          console.log('Rendering page...');
-          this.render();
-          console.log('✅ Page rendered after OAuth');
-          return true; // Indicate OAuth was processed
-        } catch (err: any) {
-          console.error('❌ Exception during OAuth session setup:', err);
-          console.error('Error details:', {
-            message: err?.message,
-            stack: err?.stack
-          });
-          return false;
-        }
+      if (sessionData.session) {
+        console.log('✅ OAuth session automatically processed by Supabase');
+        console.log('User:', sessionData.session.user?.email || sessionData.session.user?.id);
+        
+        // Update auth state
+        await this.refreshAuthState();
+        console.log('✅ Auth state refreshed, currentUserId:', this.currentUserId);
+        
+        // Clean the URL - remove all OAuth parameters from hash
+        this.currentPage = 'main';
+        const cleanUrl = `${window.location.origin}${window.location.pathname}#main`;
+        window.history.replaceState({}, '', cleanUrl);
+        console.log('✅ URL cleaned, redirecting to main');
+        
+        // Render the page
+        this.render();
+        console.log('✅ Page rendered after OAuth');
+        return true;
       } else {
-        console.warn('⚠️ OAuth tokens in hash but missing access_token or refresh_token');
+        console.warn('⚠️ OAuth tokens in hash but session not automatically set');
+        return false;
       }
     }
     
