@@ -2631,6 +2631,19 @@ body.auth-background {
 .selection-color-swatch[aria-label="Warm wood"] {
   background: #c28b5c;
 }
+/* Wall color swatches */
+.selection-color-swatch[aria-label="Light gray"] {
+  background: #b5b5b5;
+}
+.selection-color-swatch[aria-label="Off white"] {
+  background: #f0f0f0;
+}
+.selection-color-swatch[aria-label="Light gray 2"] {
+  background: #e0e0e0;
+}
+.selection-color-swatch[aria-label="Gray"] {
+  background: #d0d0d0;
+}
 .selection-color-swatch-default {
   background: linear-gradient(135deg, #c28b5c 0%, #f5f5f5 50%, #888888 100%);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35) inset;

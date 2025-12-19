@@ -886,7 +886,7 @@ export class Router {
                   <div class="profile-plan-badge profile-plan-badge-premium">Popular</div>
                   <h3 class="profile-plan-name">Premium</h3>
                   <div class="profile-plan-price">
-                    ₾10
+                    ₾1000
                     <span class="profile-plan-uses">5 uses</span>
                   </div>
                   <p class="profile-plan-description">Upload blueprints and generate AI models</p>
@@ -903,7 +903,7 @@ export class Router {
                   <div class="profile-plan-badge profile-plan-badge-plus">Best Value</div>
                   <h3 class="profile-plan-name">Premium Plus</h3>
                   <div class="profile-plan-price">
-                    ₾20
+                    ₾2000
                     <span class="profile-plan-uses">12 uses</span>
                   </div>
                   <p class="profile-plan-description">Maximum AI generations for power users</p>
@@ -1052,9 +1052,18 @@ export class Router {
                 </div>
                 <div class="viewer-overlay"></div>
                 <div class="viewer-controls-right">
-                  <button class="selection-btn" id="wall-color-btn" aria-label="Change wall color">
-                    <span class="icon icon-wall"></span>
-                  </button>
+                  <div class="selection-color">
+                    <button class="selection-btn" id="wall-color-btn" aria-label="Change wall color">
+                      <span class="selection-color-dot" id="wall-color-dot"></span>
+                    </button>
+                    <div class="selection-color-palette" id="wall-color-palette" hidden>
+                      <button class="selection-color-swatch" data-color="#b5b5b5" aria-label="Light gray"></button>
+                      <button class="selection-color-swatch" data-color="#ffffff" aria-label="White"></button>
+                      <button class="selection-color-swatch" data-color="#f0f0f0" aria-label="Off white"></button>
+                      <button class="selection-color-swatch" data-color="#e0e0e0" aria-label="Light gray 2"></button>
+                      <button class="selection-color-swatch" data-color="#d0d0d0" aria-label="Gray"></button>
+                    </div>
+                  </div>
                   <button class="selection-btn" id="floor-texture-btn" aria-label="Change floor texture">
                     <span class="icon icon-floor"></span>
                   </button>
@@ -1888,20 +1897,36 @@ export class Router {
     modalOpenBtn?.addEventListener('click', () => setModalState(true));
     modalBackdrop?.addEventListener('click', attemptCloseModal);
 
-    // Wall color and floor texture buttons
+    // Wall color button with palette (like furniture color button)
     const wallColorBtn = this.appElement.querySelector('#wall-color-btn') as HTMLButtonElement | null;
-    const floorTextureBtn = this.appElement.querySelector('#floor-texture-btn') as HTMLButtonElement | null;
+    const wallColorPalette = this.appElement.querySelector('#wall-color-palette') as HTMLElement | null;
+    const wallColorDot = this.appElement.querySelector('#wall-color-dot') as HTMLElement | null;
     
-    if (wallColorBtn && viewer) {
-      let wallColorIndex = 0;
-      const wallColors = ['#b5b5b5', '#ffffff', '#f0f0f0', '#e0e0e0', '#d0d0d0', '#c0c0c0'];
-      
-      wallColorBtn.addEventListener('click', () => {
-        if (!viewer || !this.currentPlanId) return;
-        wallColorIndex = (wallColorIndex + 1) % wallColors.length;
-        viewer.setWallColor(wallColors[wallColorIndex]);
+    if (wallColorBtn && wallColorPalette && viewer) {
+      wallColorBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (!this.currentPlanId) return;
+        wallColorPalette.hidden = !wallColorPalette.hidden;
+      });
+
+      const wallSwatches = Array.from(wallColorPalette.querySelectorAll<HTMLButtonElement>('[data-color]'));
+      wallSwatches.forEach(swatch => {
+        swatch.addEventListener('click', (event) => {
+          event.stopPropagation();
+          if (!this.currentPlanId) return;
+          const color = swatch.getAttribute('data-color');
+          if (!color) return;
+          viewer.setWallColor(color);
+          if (wallColorDot) {
+            wallColorDot.style.background = color;
+          }
+          wallColorPalette.hidden = true;
+        });
       });
     }
+    
+    // Floor texture button - toggle between 2 textures
+    const floorTextureBtn = this.appElement.querySelector('#floor-texture-btn') as HTMLButtonElement | null;
     
     if (floorTextureBtn && viewer) {
       let floorTextureIndex = 0;
@@ -1910,8 +1935,9 @@ export class Router {
         'components/textures/wooden2_floor.jpg'
       ];
       
-      floorTextureBtn.addEventListener('click', () => {
-        if (!viewer || !this.currentPlanId) return;
+      floorTextureBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (!this.currentPlanId) return;
         floorTextureIndex = (floorTextureIndex + 1) % floorTextures.length;
         const texture = floorTextures[floorTextureIndex];
         viewer.setFloorTexture(texture);
