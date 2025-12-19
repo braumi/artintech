@@ -1519,17 +1519,21 @@ export class ThreeApartmentViewer {
     });
     console.table(materialInfo);
     
-    // Update all materials that could be walls - be very permissive
+    // Update all materials that could be walls - handle MeshStandardMaterial, MeshPhongMaterial, and MeshLambertMaterial
     let updatedCount = 0;
     allMaterials.forEach(mat => {
-      if (!(mat instanceof THREE.MeshStandardMaterial) || !mat.color) {
-        if (mat instanceof THREE.MeshStandardMaterial) {
-          console.log('  ⏭️ Skipping (no color):', (mat as any).name || '(unnamed)');
-        }
+      // Check if it's a material type that has a color property
+      const hasColor = (mat instanceof THREE.MeshStandardMaterial || 
+                       mat instanceof THREE.MeshPhongMaterial || 
+                       mat instanceof THREE.MeshLambertMaterial) && 
+                      (mat as any).color && 
+                      ((mat as any).color as THREE.Color).isColor;
+      
+      if (!hasColor) {
         return;
       }
       
-      const m = mat as THREE.MeshStandardMaterial & { name?: string };
+      const m = mat as THREE.MeshStandardMaterial | THREE.MeshPhongMaterial | THREE.MeshLambertMaterial & { name?: string; color: THREE.Color };
       const name = (m.name ?? '').toLowerCase();
       const currentColor = m.color.getHex();
       
@@ -1560,8 +1564,23 @@ export class ThreeApartmentViewer {
         return;
       }
       
+      // Skip special materials that aren't walls
+      if (
+        name.includes('metal') ||
+        name.includes('chrome') ||
+        name.includes('stainless') ||
+        name.includes('marble') ||
+        name.includes('plastic') ||
+        name.includes('tkanina') ||
+        name.includes('drewno') ||
+        (name.includes('black') && !name.includes('matte'))
+      ) {
+        console.log('  ⏭️ Skipping special material:', m.name);
+        return;
+      }
+      
       // Update this material - it should be a wall
-      console.log('  ✅ Updating wall:', m.name || '(unnamed)', 'from', '#' + currentColor.toString(16).padStart(6, '0'), 'to', color);
+      console.log('  ✅ Updating wall:', m.name || '(unnamed)', 'Type:', mat.constructor.name, 'from', '#' + currentColor.toString(16).padStart(6, '0'), 'to', color);
       m.color.copy(targetColor);
       m.needsUpdate = true;
       updatedCount++;
