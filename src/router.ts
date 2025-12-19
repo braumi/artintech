@@ -1198,36 +1198,10 @@ export class Router {
 
   private async refreshAuthState(): Promise<void> {
     try {
-      console.log('refreshAuthState: Starting...');
-      
-      // Check localStorage directly to see if session is stored
-      // Supabase uses a key like 'sb-{project-ref}-auth-token' by default
+      // Check localStorage for Supabase session keys
       const supabaseKeys = Object.keys(localStorage).filter(key => key.startsWith('sb-') && key.includes('auth'));
-      console.log('refreshAuthState: localStorage check:', { 
-        allSupabaseKeys: supabaseKeys,
-        hasStoredSession: supabaseKeys.length > 0,
-        firstKeyValue: supabaseKeys[0] ? localStorage.getItem(supabaseKeys[0])?.substring(0, 50) + '...' : null
-      });
       
-      // Try to manually parse the session to see if it's valid JSON
-      if (supabaseKeys.length > 0) {
-        try {
-          const sessionStr = localStorage.getItem(supabaseKeys[0]);
-          if (sessionStr) {
-            const sessionObj = JSON.parse(sessionStr);
-            console.log('refreshAuthState: Parsed session from localStorage:', {
-              hasAccessToken: !!sessionObj.access_token,
-              hasUser: !!sessionObj.user,
-              userId: sessionObj.user?.id || 'N/A'
-            });
-          }
-        } catch (e) {
-          console.warn('refreshAuthState: Failed to parse session from localStorage:', e);
-        }
-      }
-      
-      // First, try to get the session from storage
-      console.log('refreshAuthState: About to call getSession()...');
+      // Try to get the session from storage with timeout fallback
       let sessionData: { session: any } | null = null;
       let sessionError: any = null;
       
@@ -1235,28 +1209,19 @@ export class Router {
       try {
         const getSessionPromise = supabase.auth.getSession();
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('getSession timeout after 2 seconds')), 2000)
+          setTimeout(() => reject(new Error('getSession timeout')), 2000)
         );
         
         const result = await Promise.race([getSessionPromise, timeoutPromise]) as any;
         sessionData = result.data;
         sessionError = result.error;
-        console.log('refreshAuthState: getSession result:', { 
-          hasSession: !!sessionData.session, 
-          hasError: !!sessionError,
-          sessionToken: sessionData.session?.access_token ? 'Present' : 'Missing',
-          sessionExpiresAt: sessionData.session?.expires_at ? new Date(sessionData.session.expires_at * 1000).toISOString() : 'N/A',
-          sessionUserId: sessionData.session?.user?.id || 'N/A'
-        });
       } catch (err: any) {
-        console.warn('refreshAuthState: getSession failed or timed out:', err.message);
-        // If getSession fails, try to use the parsed session from localStorage
+        // If getSession fails or times out, try to use the parsed session from localStorage
         if (supabaseKeys.length > 0) {
           try {
             const sessionStr = localStorage.getItem(supabaseKeys[0]);
             if (sessionStr) {
               const parsedSession = JSON.parse(sessionStr);
-              console.log('refreshAuthState: Using parsed session from localStorage as fallback');
               sessionData = { session: parsedSession };
             }
           } catch (parseErr) {
@@ -1266,16 +1231,11 @@ export class Router {
         sessionError = err;
       }
       
-      if (sessionError && !sessionData) {
-        console.warn('refreshAuthState: No session available');
-      }
-      
       // If we have a session, use it. Otherwise, try getUser which will validate the stored session
-      if (sessionData?.session) {
+      if (sessionData && sessionData.session) {
         // First, try to get user from the session object directly (faster, no network call)
         const sessionUser = sessionData.session.user;
         if (sessionUser && sessionUser.id) {
-          console.log('refreshAuthState: Using user from session, userId:', sessionUser.id);
           this.currentUserId = sessionUser.id;
           
           // Try to get name from session user metadata
@@ -1286,15 +1246,11 @@ export class Router {
             this.currentUserName = sessionUser.email.split('@')[0] ?? null;
           }
           
-          // Still try to validate with getUser (but don't block on it)
-          console.log('refreshAuthState: Validating session with getUser (non-blocking)...');
+          // Validate session in background (non-blocking)
           supabase.auth.getUser().then(({ data, error }) => {
-            console.log('refreshAuthState: getUser validation result:', { hasUser: !!data?.user, hasError: !!error });
             if (error) {
-              console.warn('refreshAuthState: Session validation failed:', error);
-              // If validation fails, clear the session
+              // If validation fails, clear the session if expired
               if (error.message?.includes('JWT') || error.message?.includes('expired')) {
-                console.log('refreshAuthState: Session expired, signing out...');
                 supabase.auth.signOut();
                 this.currentUserId = null;
                 this.currentUserName = null;
@@ -1305,23 +1261,18 @@ export class Router {
               this.currentUserId = data.user.id;
               this.render();
             }
-          }).catch(err => {
-            console.warn('refreshAuthState: getUser validation error (ignored):', err);
+          }).catch(() => {
+            // Ignore validation errors
           });
           
-          console.log('refreshAuthState: Completed successfully, userId:', this.currentUserId);
           return; // Early return - we've set the user from session
         }
         
         // Fallback: try getUser if session.user is not available
-        console.log('refreshAuthState: Session found but no user in session, validating with getUser...');
         const { data, error } = await supabase.auth.getUser();
-        console.log('refreshAuthState: getUser result:', { hasUser: !!data?.user, hasError: !!error, userId: data?.user?.id });
         
         if (error) {
-          console.warn('refreshAuthState: getUser error (session might be invalid):', error);
           // If getUser fails, the session might be expired or invalid
-          // Clear the session and reset auth state
           await supabase.auth.signOut();
           this.currentUserId = null;
           this.currentUserName = null;
@@ -1330,13 +1281,11 @@ export class Router {
 
         const user = data?.user;
         if (!user) {
-          console.log('refreshAuthState: No user found despite having session');
           this.currentUserId = null;
           this.currentUserName = null;
           return;
         }
 
-        console.log('refreshAuthState: User found, setting currentUserId to:', user.id);
         this.currentUserId = user.id;
 
         // Try to load profile.full_name first
@@ -1365,22 +1314,17 @@ export class Router {
         }
 
         this.currentUserName = fullName;
-        console.log('refreshAuthState: Completed successfully, userId:', this.currentUserId);
       } else {
-        console.log('refreshAuthState: No session found');
         this.currentUserId = null;
         this.currentUserName = null;
       }
     } catch (err) {
       console.error('refreshAuthState: Error:', err);
-      throw err;
+      this.currentUserId = null;
+      this.currentUserName = null;
     } finally {
-      console.log('refreshAuthState: Finally block, currentUserId:', this.currentUserId, 'currentPage:', this.currentPage);
       // Re-render header/page with updated auth state
-      // Note: Navigation is handled by the calling code, not here
-      console.log('refreshAuthState: Calling render()');
       this.render();
-      console.log('refreshAuthState: Render() completed');
     }
   }
 
@@ -1420,63 +1364,29 @@ export class Router {
       }
 
       try {
-        console.log('Calling supabase.auth.signInWithPassword...');
-        console.log('Supabase client check:', {
-          hasClient: !!supabase,
-          hasAuth: !!supabase?.auth,
-          url: supabase?.supabaseUrl
-        });
-        
-        console.log('About to call signInWithPassword...');
-        
-        // Try with explicit error handling
-        let result;
-        try {
-          result = await supabase.auth.signInWithPassword({ email, password });
-          console.log('signInWithPassword returned, result:', result);
-        } catch (err) {
-          console.error('signInWithPassword threw an error:', err);
-          if (errorEl) {
-            errorEl.textContent = 'An error occurred during sign-in. Please try again.';
-          }
-          return;
-        }
-        
-        const { data, error } = result;
-        console.log('Sign-in response received:', { hasData: !!data, hasError: !!error, errorMessage: error?.message });
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         
         if (error) {
-          console.error('Sign-in error details:', error);
           if (errorEl) {
             errorEl.textContent = error.message || 'Email or password is incorrect.';
           }
           return;
         }
         
-        console.log('Sign-in successful, data:', data);
-        console.log('Session data:', data?.session);
-        console.log('User data:', data?.user);
-        
-        // Always refresh auth state so we know for sure if there is a session
-        console.log('Calling refreshAuthState...');
+        // Refresh auth state to update UI
         await this.refreshAuthState();
-        console.log('After refreshAuthState, currentUserId:', this.currentUserId);
-        console.log('Current page:', this.currentPage);
 
         if (!this.currentUserId) {
           // No valid session after attempting sign-in → stay on page and show error
-          console.warn('No userId after sign-in and refreshAuthState');
           if (errorEl) {
             errorEl.textContent = 'Email or password is incorrect.';
           }
           return;
         }
 
-        // If we do have a session (user is signed in), force navigation to home
-        console.log('Sign-in successful, navigating to main');
+        // Navigate to main page after successful sign-in
         this.currentPage = 'main';
         window.location.hash = 'main';
-        // refreshAuthState's finally block already called render(), but we need to ensure navigation
         this.render();
       } catch (err) {
         console.error('Sign-in exception:', err);
