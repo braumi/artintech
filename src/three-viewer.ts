@@ -202,6 +202,7 @@ export class ThreeApartmentViewer {
   private floorMaterialCache: Map<FloorMaterialKey, THREE.MeshStandardMaterial> = new Map();
   private floorTextureCache: Map<FloorMaterialKey, THREE.Texture> = new Map();
   private houseModelRoot: THREE.Object3D | null = null;
+  private originalFloorMaterials: Map<THREE.Mesh, THREE.MeshStandardMaterial> = new Map();
 
   mount(container: HTMLElement): void {
     this.dispose();
@@ -318,6 +319,7 @@ export class ThreeApartmentViewer {
     this.floors = [];
     this.walls = [];
     this.wallBounds = [];
+    this.originalFloorMaterials.clear();
     this.houseModelRoot = null;
     this.clearFurniture();
     this.setActiveFurniture(null);
@@ -355,6 +357,10 @@ export class ThreeApartmentViewer {
       floorMesh.rotation.x = -Math.PI / 2; // XY shape -> XZ plane
       this.rootGroup.add(floorMesh);
       this.floors.push(floorMesh);
+      // Store original material for reset
+      if (floorMat instanceof THREE.MeshStandardMaterial) {
+        this.originalFloorMaterials.set(floorMesh, floorMat.clone());
+      }
 
       // Walls along edges
       for (let i = 0; i < room.polygon.length; i++) {
@@ -708,6 +714,7 @@ export class ThreeApartmentViewer {
     this.floors = [];
     this.walls = [];
     this.wallBounds = [];
+    this.originalFloorMaterials.clear();
     this.houseModelRoot = null;
     this.furnitureItems.clear();
     this.selectFurnitureInternal(null, true);
@@ -1401,6 +1408,48 @@ export class ThreeApartmentViewer {
     const x = (vector.x * 0.5 + 0.5) * canvasRect.width + (canvasRect.left - containerRect.left);
     const y = (-vector.y * 0.5 + 0.5) * canvasRect.height + (canvasRect.top - containerRect.top);
     return { x, y };
+  }
+
+  setWallColor(color: string | number): void {
+    const colorValue = typeof color === 'string' ? parseInt(color.replace('#', ''), 16) : color;
+    this.walls.forEach(wall => {
+      wall.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh;
+          if (mesh.material instanceof THREE.MeshStandardMaterial) {
+            mesh.material.color.setHex(colorValue);
+          }
+        }
+      });
+    });
+  }
+
+  setFloorTexture(texturePath: string | null): void {
+    if (texturePath === null) {
+      // Reset to original materials
+      this.floors.forEach(floor => {
+        const original = this.originalFloorMaterials.get(floor);
+        if (original) {
+          floor.material = original.clone();
+        }
+      });
+      return;
+    }
+    
+    const loader = new THREE.TextureLoader();
+    loader.load(texturePath, (texture) => {
+      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(3, 3);
+      
+      this.floors.forEach(floor => {
+        if (floor.material instanceof THREE.MeshStandardMaterial) {
+          const newMaterial = floor.material.clone();
+          newMaterial.map = texture;
+          newMaterial.needsUpdate = true;
+          floor.material = newMaterial;
+        }
+      });
+    });
   }
 }
 

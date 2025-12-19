@@ -1051,6 +1051,14 @@ export class Router {
                   </div>
                 </div>
                 <div class="viewer-overlay"></div>
+                <div class="viewer-controls-right">
+                  <button class="selection-btn" id="wall-color-btn" aria-label="Change wall color">
+                    <span class="icon icon-wall"></span>
+                  </button>
+                  <button class="selection-btn" id="floor-texture-btn" aria-label="Change floor texture">
+                    <span class="icon icon-floor"></span>
+                  </button>
+                </div>
               </div>
             </div>
           </section>
@@ -1879,6 +1887,36 @@ export class Router {
 
     modalOpenBtn?.addEventListener('click', () => setModalState(true));
     modalBackdrop?.addEventListener('click', attemptCloseModal);
+
+    // Wall color and floor texture buttons
+    const wallColorBtn = this.appElement.querySelector('#wall-color-btn') as HTMLButtonElement | null;
+    const floorTextureBtn = this.appElement.querySelector('#floor-texture-btn') as HTMLButtonElement | null;
+    
+    if (wallColorBtn && viewer) {
+      let wallColorIndex = 0;
+      const wallColors = ['#b5b5b5', '#ffffff', '#f0f0f0', '#e0e0e0', '#d0d0d0', '#c0c0c0'];
+      
+      wallColorBtn.addEventListener('click', () => {
+        if (!viewer || !this.currentPlanId) return;
+        wallColorIndex = (wallColorIndex + 1) % wallColors.length;
+        viewer.setWallColor(wallColors[wallColorIndex]);
+      });
+    }
+    
+    if (floorTextureBtn && viewer) {
+      let floorTextureIndex = 0;
+      const floorTextures = [
+        null, // default (original floor material)
+        'components/textures/wooden2_floor.jpg'
+      ];
+      
+      floorTextureBtn.addEventListener('click', () => {
+        if (!viewer || !this.currentPlanId) return;
+        floorTextureIndex = (floorTextureIndex + 1) % floorTextures.length;
+        const texture = floorTextures[floorTextureIndex];
+        viewer.setFloorTexture(texture);
+      });
+    }
 
     // Chat panel close/reopen functionality
     const chatPanel = this.appElement.querySelector('#chat-panel') as HTMLElement | null;
