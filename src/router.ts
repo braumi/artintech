@@ -265,7 +265,7 @@ export class Router {
         const { data, error } = await supabase.auth.exchangeCodeForSession(code);
         if (error) {
           console.error('Failed to exchange OAuth code for session:', error);
-          return;
+          return false;
         }
         console.log('OAuth session exchange successful:', data);
       } catch (err) {
@@ -362,7 +362,7 @@ export class Router {
               status: error.status,
               name: error.name
             });
-            return;
+            return false;
           }
           
           console.log('✅ OAuth session set successfully');
