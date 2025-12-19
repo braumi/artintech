@@ -248,10 +248,22 @@ export class Router {
    * signed out and prompt again.
    */
   private async handleOAuthCallback(): Promise<boolean> {
-    // Check for OAuth callback in query string (code parameter)
+    // Check for OAuth errors in query string first
     const queryParams = new URLSearchParams(window.location.search);
-    const code = queryParams.get('code');
     const oauthError = queryParams.get('error_description');
+    const oauthErrorCode = queryParams.get('error_code');
+    
+    // If there's an error in the query string, log it and clean the URL
+    if (oauthError || oauthErrorCode) {
+      console.warn('⚠️ OAuth error detected:', { error: oauthError, code: oauthErrorCode });
+      // Clean the URL by removing error parameters
+      const cleanUrl = `${window.location.origin}${window.location.pathname}${window.location.hash || '#signin'}`;
+      window.history.replaceState({}, '', cleanUrl);
+      return false;
+    }
+    
+    // Check for OAuth callback in query string (code parameter)
+    const code = queryParams.get('code');
 
     if (oauthError) {
       console.warn('OAuth error from provider:', oauthError);
@@ -350,27 +362,58 @@ export class Router {
         try {
           // Set the session explicitly to ensure we get the correct user
           console.log('Setting OAuth session...');
-          const { data, error } = await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken
-          });
+          console.log('Access token length:', accessToken.length);
+          console.log('Refresh token length:', refreshToken.length);
           
-          if (error) {
-            console.error('❌ Failed to set OAuth session:', error);
+          let sessionData;
+          try {
+            // Add timeout to prevent hanging
+            const setSessionPromise = supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken
+            });
+            
+            const timeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('setSession timeout after 5 seconds')), 5000)
+            );
+            
+            const result = await Promise.race([setSessionPromise, timeoutPromise]) as any;
+            
+            if (result.error) {
+              console.error('❌ Failed to set OAuth session:', result.error);
+              console.error('Error details:', {
+                message: result.error.message,
+                status: result.error.status,
+                name: result.error.name
+              });
+              return false;
+            }
+            
+            sessionData = result.data;
+            console.log('✅ OAuth session set successfully');
+            console.log('Session data:', {
+              hasUser: !!sessionData.user,
+              userEmail: sessionData.user?.email,
+              userId: sessionData.user?.id
+            });
+          } catch (sessionError: any) {
+            console.error('❌ Exception setting OAuth session:', sessionError);
             console.error('Error details:', {
-              message: error.message,
-              status: error.status,
-              name: error.name
+              message: sessionError?.message,
+              stack: sessionError?.stack
             });
             return false;
           }
           
-          console.log('✅ OAuth session set successfully');
-          console.log('User:', data.user?.email || data.user?.id);
-          
           // Update auth state first to set currentUserId
-          await this.refreshAuthState();
-          console.log('✅ Auth state refreshed, currentUserId:', this.currentUserId);
+          console.log('Refreshing auth state...');
+          try {
+            await this.refreshAuthState();
+            console.log('✅ Auth state refreshed, currentUserId:', this.currentUserId);
+          } catch (refreshError) {
+            console.error('❌ Error refreshing auth state:', refreshError);
+            // Continue anyway - we have the session
+          }
           
           // Clean the URL and navigate to main page
           this.currentPage = 'main';
@@ -379,6 +422,7 @@ export class Router {
           console.log('✅ URL cleaned, redirecting to main');
           
           // Force a full page render with the updated state
+          console.log('Rendering page...');
           this.render();
           console.log('✅ Page rendered after OAuth');
           return true; // Indicate OAuth was processed
@@ -1596,14 +1640,18 @@ export class Router {
         }
         
         console.log('🔵 Google sign-in initiated...');
-        const redirectUrl = `${window.location.origin}${window.location.pathname}#signin`;
+        // Use the full URL without hash for OAuth redirect (Supabase will add tokens to hash)
+        const redirectUrl = `${window.location.origin}${window.location.pathname}`;
         console.log('Redirect URL:', redirectUrl);
+        console.log('⚠️ Make sure this URL is added to Supabase Dashboard → Authentication → URL Configuration → Redirect URLs');
         
         const { data, error } = await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: {
-            // Redirect to the sign-in page with hash, Supabase will append tokens to hash
-            redirectTo: redirectUrl
+            // Redirect to the origin + pathname (no hash), Supabase will append tokens to hash
+            redirectTo: redirectUrl,
+            // Skip browser redirect handling to avoid state issues
+            skipBrowserRedirect: false
           }
         });
         
