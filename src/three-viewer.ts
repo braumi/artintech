@@ -1415,11 +1415,29 @@ export class ThreeApartmentViewer {
   }
 
   setWallColor(color: string | number): void {
-    const colorValue = typeof color === 'string' ? parseInt(color.replace('#', ''), 16) : color;
-    // Update all tracked wall materials directly
-    this.wallMaterials.forEach(material => {
-      material.color.setHex(colorValue);
-      material.needsUpdate = true;
+    const targetColor = new THREE.Color(color as any);
+    // Traverse all walls and update materials the same way furniture colors are changed
+    this.walls.forEach(wall => {
+      wall.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh;
+          const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          materials.forEach(mat => {
+            const m = mat as THREE.Material & {
+              color?: THREE.Color;
+              name?: string;
+            };
+            // Only change wall materials (MeshStandardMaterial), skip doors and windows
+            if (m instanceof THREE.MeshStandardMaterial && m.color) {
+              // Skip door material (brown) and window material (MeshPhysicalMaterial is handled above)
+              const isDoor = m.color.getHex() === 0x8b5a2b;
+              if (!isDoor) {
+                m.color.copy(targetColor);
+              }
+            }
+          });
+        }
+      });
     });
   }
 
