@@ -531,6 +531,7 @@ export class ThreeApartmentViewer {
 
     // Ensure key architectural materials (doors, glass) render correctly
     // Also store original floor textures for restoration
+    // And track wall materials from the house model
     raw.traverse(child => {
       if (!(child as THREE.Mesh).isMesh) return;
       const mesh = child as THREE.Mesh;
@@ -542,10 +543,11 @@ export class ThreeApartmentViewer {
           transparent?: boolean;
           opacity?: number;
           map?: THREE.Texture | null;
+          color?: THREE.Color;
         };
         const name = (m.name ?? '').toLowerCase();
         
-        // Store original floor textures
+        // Track wall materials from house model (exclude doors, windows, floors)
         const isDoorMaterial = 
           name.includes('door') || 
           name.includes('dvere') ||
@@ -553,28 +555,61 @@ export class ThreeApartmentViewer {
           name === 'glass_dvere' ||
           name === 'door_material';
         
-        if (!isDoorMaterial) {
-          const isSpecificFloorMaterial = 
-            name === 'alder_fine_wood_pbr_texture_seamless' ||
-            name === 'laminate_floor' ||
-            name.includes('podloga') ||
-            name.includes('podłoga');
-          
-          const hasFloorTexture = m.map && (
+        const isFloorMaterial = 
+          name === 'alder_fine_wood_pbr_texture_seamless' ||
+          name === 'laminate_floor' ||
+          name.includes('podloga') ||
+          name.includes('podłoga') ||
+          (m.map && (
             (m.map as any).image?.src?.includes('wooden_floor') ||
             (m.map as any).image?.src?.includes('tile_floor')
-          );
-          
-          if (isSpecificFloorMaterial || hasFloorTexture) {
-            // Store original texture for this material
-            this.originalFloorTextures.set(m, m.map ? m.map.clone() : null);
+          ));
+        
+        const isWindowMaterial = name.includes('glass') || name.includes('szklo');
+        
+        // If it's a wall material (MeshStandardMaterial with color, not door/window/floor)
+        if (!isDoorMaterial && !isFloorMaterial && !isWindowMaterial) {
+          if (m instanceof THREE.MeshStandardMaterial && m.color) {
+            // Check for specific wall material names from MTL files
+            const isSpecificWallMaterial = 
+              name.includes('sciana') || // Polish for "wall"
+              name.includes('bialy') || // Polish for "white" (wall color)
+              name === 'black_matte_01.001' ||
+              name === 'pvc' ||
+              name === 'prah' ||
+              name === 'prah.002';
+            
+            // Or check if it's likely a wall (has a color, not transparent, not a special material)
+            const isGenericWall = 
+              !m.transparent &&
+              m.opacity !== undefined && m.opacity > 0.9 &&
+              !name.includes('metal') &&
+              !name.includes('chrome') &&
+              !name.includes('stainless') &&
+              !name.includes('marble') &&
+              !name.includes('plastic') &&
+              !name.includes('black') &&
+              !name.includes('wood') &&
+              !name.includes('drewno') &&
+              !name.includes('tkanina'); // fabric
+            
+            if (isSpecificWallMaterial || isGenericWall) {
+              this.wallMaterials.add(m);
+              console.log('Tracked wall material from house model:', m.name);
+            }
           }
+        }
+        
+        // Store original floor textures
+        if (isFloorMaterial) {
+          // Store original texture for this material
+          this.originalFloorTextures.set(m, m.map ? m.map.clone() : null);
         }
         
         if (name.includes('door')) {
           m.side = THREE.DoubleSide;
         }
-        if (name.includes('glass') || name.includes('szklo')) {
+        if (isWindowMaterial) {
           // Make glass look transparent from both sides
           m.side = THREE.DoubleSide;
           m.transparent = true;
@@ -1447,7 +1482,7 @@ export class ThreeApartmentViewer {
 
   setWallColor(color: string | number): void {
     const targetColor = new THREE.Color(color as any);
-    console.log('Setting wall color to:', color, 'Walls count:', this.walls.length);
+    console.log('Setting wall color to:', color, 'Tracked wall materials:', this.wallMaterials.size, 'Programmatic walls:', this.walls.length);
     
     // Update tracked wall materials directly (faster and more reliable)
     this.wallMaterials.forEach(material => {
@@ -1455,7 +1490,7 @@ export class ThreeApartmentViewer {
       material.needsUpdate = true;
     });
     
-    // Also traverse walls as backup
+    // Also traverse programmatic walls as backup
     this.walls.forEach(wall => {
       wall.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
@@ -1479,6 +1514,51 @@ export class ThreeApartmentViewer {
         }
       });
     });
+    
+    // Also traverse house model to update wall materials (in case they weren't tracked)
+    if (this.houseModelRoot) {
+      this.houseModelRoot.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh;
+          const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          materials.forEach(mat => {
+            const m = mat as THREE.Material & {
+              color?: THREE.Color;
+              name?: string;
+            };
+            const name = (m.name ?? '').toLowerCase();
+            
+            // Skip doors, windows, and floors
+            const isDoor = name.includes('door') || name.includes('dvere');
+            const isWindow = name.includes('glass') || name.includes('szklo');
+            const isFloor = 
+              name === 'alder_fine_wood_pbr_texture_seamless' ||
+              name === 'laminate_floor' ||
+              name.includes('podloga') ||
+              name.includes('podłoga');
+            
+            if (!isDoor && !isWindow && !isFloor) {
+              if (m instanceof THREE.MeshStandardMaterial && m.color) {
+                // Check if it's a wall material (not special materials)
+                const isSpecialMaterial = 
+                  name.includes('metal') ||
+                  name.includes('chrome') ||
+                  name.includes('stainless') ||
+                  name.includes('marble') ||
+                  name.includes('pvc') ||
+                  name.includes('plastic') ||
+                  name.includes('black');
+                
+                if (!isSpecialMaterial && !m.transparent) {
+                  m.color.copy(targetColor);
+                  m.needsUpdate = true;
+                }
+              }
+            }
+          });
+        }
+      });
+    }
   }
 
   setFloorTexture(texturePath: string | null): void {
