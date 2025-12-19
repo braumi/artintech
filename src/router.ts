@@ -242,112 +242,36 @@ export class Router {
   }
 
   /**
-   * If we just returned from an OAuth provider (e.g. Google), Supabase puts a
-   * `code` query param in the URL. We must exchange that code for a session
-   * before we can read the current user; otherwise the app will think we're
-   * signed out and prompt again.
+   * Handle OAuth callback - Clean URL immediately, then let Supabase process tokens
    */
   private async handleOAuthCallback(): Promise<boolean> {
-    // Check for OAuth errors in query string first
-    const queryParams = new URLSearchParams(window.location.search);
-    const oauthError = queryParams.get('error_description');
-    const oauthErrorCode = queryParams.get('error_code');
+    const hash = window.location.hash;
+    const hasOAuthTokens = hash && (hash.includes('access_token=') || hash.includes('code='));
     
-    // If there's an error in the query string, log it and clean the URL
-    if (oauthError || oauthErrorCode) {
-      console.warn('⚠️ OAuth error detected:', { error: oauthError, code: oauthErrorCode });
-      // Clean the URL by removing error parameters
-      const cleanUrl = `${window.location.origin}${window.location.pathname}${window.location.hash || '#signin'}`;
-      window.history.replaceState({}, '', cleanUrl);
+    if (!hasOAuthTokens) {
       return false;
     }
     
-    // Check for OAuth callback in query string (code parameter)
-    const code = queryParams.get('code');
-
-    if (oauthError) {
-      console.warn('OAuth error from provider:', oauthError);
-      return false;
-    }
-
-    if (code) {
-      // Handle code-based OAuth flow
-      console.log('OAuth callback detected, exchanging code for session...');
-      try {
-        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-        if (error) {
-          console.error('Failed to exchange OAuth code for session:', error);
-          return false;
-        }
-        console.log('OAuth session exchange successful:', data);
-      } catch (err) {
-        console.error('Exception during OAuth code exchange:', err);
-        return false;
-      }
-
-      // Clean the URL (remove ?code=...) but keep the current hash route
-      const hash = window.location.hash || '#main';
-      const cleanUrl = `${window.location.origin}${window.location.pathname}${hash}`;
-      window.history.replaceState({}, '', cleanUrl);
-
-      // Update auth state after exchanging the session
+    // IMMEDIATELY clean the URL - remove all OAuth tokens from hash
+    // Supabase has already processed them via detectSessionInUrl
+    const cleanUrl = `${window.location.origin}${window.location.pathname}#main`;
+    window.history.replaceState({}, '', cleanUrl);
+    this.currentPage = 'main';
+    
+    // Now check if session was set
+    const { data: sessionData } = await supabase.auth.getSession();
+    
+    if (sessionData.session) {
       await this.refreshAuthState();
-      
-      // Navigate to main if on sign-in page
-      if (this.currentPage === 'signin' || this.currentPage === 'signup') {
-        this.currentPage = 'main';
-        window.location.hash = 'main';
-      }
-      
       this.render();
       return true;
     }
-
-    // Check for OAuth tokens in hash
-    // Supabase's detectSessionInUrl should automatically process these tokens
-    // We just need to wait for it to process, then clean up the URL
-    const hash = window.location.hash;
-    if (hash && hash.includes('access_token=')) {
-      console.log('🔵 OAuth tokens detected in hash');
-      console.log('Supabase should automatically process these tokens (detectSessionInUrl: true)');
-      
-      // Give Supabase time to automatically process the tokens from the hash
-      // This is the same way email/password works - Supabase handles it automatically
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Check if session was automatically set by Supabase
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      
-      if (sessionError) {
-        console.error('❌ Error getting session after OAuth:', sessionError);
-        return false;
-      }
-      
-      if (sessionData.session) {
-        console.log('✅ OAuth session automatically processed by Supabase');
-        console.log('User:', sessionData.session.user?.email || sessionData.session.user?.id);
-        
-        // Update auth state
-        await this.refreshAuthState();
-        console.log('✅ Auth state refreshed, currentUserId:', this.currentUserId);
-        
-        // Clean the URL - remove all OAuth parameters from hash
-        this.currentPage = 'main';
-        const cleanUrl = `${window.location.origin}${window.location.pathname}#main`;
-        window.history.replaceState({}, '', cleanUrl);
-        console.log('✅ URL cleaned, redirecting to main');
-        
-        // Render the page
-        this.render();
-        console.log('✅ Page rendered after OAuth');
-        return true;
-      } else {
-        console.warn('⚠️ OAuth tokens in hash but session not automatically set');
-        return false;
-      }
-    }
     
-    return false; // No OAuth callback detected
+    // No session - redirect to sign-in
+    this.currentPage = 'signin';
+    window.location.hash = 'signin';
+    this.render();
+    return false;
   }
 
   private async init(): Promise<void> {
@@ -1547,19 +1471,12 @@ export class Router {
           errorEl.textContent = '';
         }
         
-        console.log('🔵 Google sign-in initiated...');
-        // Use the full URL without hash for OAuth redirect (Supabase will add tokens to hash)
         const redirectUrl = `${window.location.origin}${window.location.pathname}`;
-        console.log('Redirect URL:', redirectUrl);
-        console.log('⚠️ Make sure this URL is added to Supabase Dashboard → Authentication → URL Configuration → Redirect URLs');
         
-        const { data, error } = await supabase.auth.signInWithOAuth({
+        const { error } = await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: {
-            // Redirect to the origin + pathname (no hash), Supabase will append tokens to hash
-            redirectTo: redirectUrl,
-            // Skip browser redirect handling to avoid state issues
-            skipBrowserRedirect: false
+            redirectTo: redirectUrl
           }
         });
         
@@ -1568,14 +1485,9 @@ export class Router {
           if (errorEl) {
             errorEl.textContent = error.message || 'Google sign-in failed. Please try again.';
           }
-        } else {
-          console.log('✅ Google OAuth redirect initiated:', data);
         }
-        if (error) {
-          if (errorEl) {
-            errorEl.textContent = 'Google sign-in failed. Please try again.';
-          }
-        }
+        // If successful, Supabase will redirect to Google, then back to our app
+        // The handleOAuthCallback() will process the return
       });
     }
   }
