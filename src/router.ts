@@ -247,7 +247,7 @@ export class Router {
    * before we can read the current user; otherwise the app will think we're
    * signed out and prompt again.
    */
-  private async handleOAuthCallback(): Promise<void> {
+  private async handleOAuthCallback(): Promise<boolean> {
     // Check for OAuth callback in query string (code parameter)
     const queryParams = new URLSearchParams(window.location.search);
     const code = queryParams.get('code');
@@ -255,7 +255,7 @@ export class Router {
 
     if (oauthError) {
       console.warn('OAuth error from provider:', oauthError);
-      return;
+      return false;
     }
 
     if (code) {
@@ -270,7 +270,7 @@ export class Router {
         console.log('OAuth session exchange successful:', data);
       } catch (err) {
         console.error('Exception during OAuth code exchange:', err);
-        return;
+        return false;
       }
 
       // Clean the URL (remove ?code=...) but keep the current hash route
@@ -280,7 +280,15 @@ export class Router {
 
       // Update auth state after exchanging the session
       await this.refreshAuthState();
-      return;
+      
+      // Navigate to main if on sign-in page
+      if (this.currentPage === 'signin' || this.currentPage === 'signup') {
+        this.currentPage = 'main';
+        window.location.hash = 'main';
+      }
+      
+      this.render();
+      return true;
     }
 
     // Check for OAuth tokens in hash (Supabase's detectSessionInUrl should handle this automatically)
@@ -360,34 +368,46 @@ export class Router {
           console.log('✅ OAuth session set successfully');
           console.log('User:', data.user?.email || data.user?.id);
           
-          // Clean the URL immediately - remove all OAuth parameters from hash
-          // Navigate to main page after successful OAuth
+          // Update auth state first to set currentUserId
+          await this.refreshAuthState();
+          console.log('✅ Auth state refreshed, currentUserId:', this.currentUserId);
+          
+          // Clean the URL and navigate to main page
           this.currentPage = 'main';
           const cleanUrl = `${window.location.origin}${window.location.pathname}#main`;
           window.history.replaceState({}, '', cleanUrl);
           console.log('✅ URL cleaned, redirecting to main');
           
-          // Update auth state
-          await this.refreshAuthState();
-          
-          // Render the page
+          // Force a full page render with the updated state
           this.render();
+          console.log('✅ Page rendered after OAuth');
+          return true; // Indicate OAuth was processed
         } catch (err: any) {
           console.error('❌ Exception during OAuth session setup:', err);
           console.error('Error details:', {
             message: err?.message,
             stack: err?.stack
           });
+          return false;
         }
       } else {
         console.warn('⚠️ OAuth tokens in hash but missing access_token or refresh_token');
       }
     }
+    
+    return false; // No OAuth callback detected
   }
 
   private async init(): Promise<void> {
     // First, handle potential OAuth redirect responses (e.g., Google)
-    await this.handleOAuthCallback();
+    const oauthProcessed = await this.handleOAuthCallback();
+    
+    // If OAuth was processed, it will have already rendered the page, so return early
+    if (oauthProcessed) {
+      console.log('✅ OAuth callback processed, skipping normal init');
+      return;
+    }
+    
     this.registerAuthListener();
     this.registerGlobalLogout();
 
