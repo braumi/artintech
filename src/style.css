@@ -279,7 +279,7 @@ p {
   
   /* Prevent scrolling on home page only */
   body.main-background {
-    height: 90vh;
+    height: 100vh;
     overflow: hidden;
   }
 
@@ -365,7 +365,7 @@ p {
   .landing {
     display: flex;
     flex-direction: column;
-    min-height: 95vh;
+    min-height: 100vh;
   }
 
   .landing-shell {
@@ -375,7 +375,7 @@ p {
     align-items: flex-start;
     justify-content: center;
     min-height: 100%;
-    padding: 1.75rem 1rem 1.5rem 1rem !important; /* start closer to top */
+    padding: .4rem 1rem 1.25rem 1rem !important; /* start closer to top */
   }
 
   .landing-header {
@@ -392,7 +392,7 @@ p {
   }
 
   .landing-lead {
-    margin-top: 1.25rem;
+    margin-top: 0.8rem;
   }
 
   .main-page .landing-hero-fixed {
