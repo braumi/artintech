@@ -6,7 +6,8 @@ import type {
 } from './three-viewer';
 import { supabase } from './supabaseClient';
 import * as THREE from 'three';
-import OpenAI from 'openai';
+// Lazy import OpenAI to avoid breaking the module if it fails
+type OpenAI = any;
 
 export type PageName = 'main' | 'product' | 'signin' | 'signup' | 'checkout' | 'profile';
 
@@ -1074,7 +1075,9 @@ export class Router {
 
     // Page-specific wiring
     if (this.currentPage === 'product') {
-      void this.attachProductEventListeners();
+      this.attachProductEventListeners().catch(err => {
+        console.error('Error attaching product event listeners:', err);
+      });
     } else if (this.currentPage === 'signin') {
       this.attachSignInListeners();
     } else if (this.currentPage === 'signup') {
@@ -1195,71 +1198,189 @@ export class Router {
 
   private async refreshAuthState(): Promise<void> {
     try {
-      // Ensure any pending OAuth redirect (e.g. Google) is exchanged for a session
-      // before we ask for the current user. This is especially important right
-      // after returning from the Google consent screen.
-      try {
-        await supabase.auth.getSession();
-      } catch {
-        // ignore session errors here; getUser below will reflect the real state
-      }
-
-      const { data, error } = await supabase.auth.getUser();
-      if (error) {
-        // eslint-disable-next-line no-console
-        console.warn('Failed to get Supabase user', error);
-        this.currentUserId = null;
-        this.currentUserName = null;
-        return;
-      }
-
-      const user = data.user;
-      if (!user) {
-        this.currentUserId = null;
-        this.currentUserName = null;
-        return;
-      }
-
-      this.currentUserId = user.id;
-
-      // Try to load profile.full_name first
-      let fullName: string | null = null;
-      try {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('full_name')
-          .eq('id', user.id)
-          .maybeSingle();
-        if (profile && typeof profile.full_name === 'string' && profile.full_name.trim()) {
-          fullName = profile.full_name.trim();
-        }
-      } catch {
-        // ignore profile errors
-      }
-
-      if (!fullName) {
-        const metaName = (user.user_metadata as any)?.full_name as string | undefined;
-        if (metaName && metaName.trim()) {
-          fullName = metaName.trim();
-        } else if (user.email) {
-          // Fallback: use the part of the email before @ so header still shows a greeting
-          fullName = user.email.split('@')[0] ?? null;
+      console.log('refreshAuthState: Starting...');
+      
+      // Check localStorage directly to see if session is stored
+      // Supabase uses a key like 'sb-{project-ref}-auth-token' by default
+      const supabaseKeys = Object.keys(localStorage).filter(key => key.startsWith('sb-') && key.includes('auth'));
+      console.log('refreshAuthState: localStorage check:', { 
+        allSupabaseKeys: supabaseKeys,
+        hasStoredSession: supabaseKeys.length > 0,
+        firstKeyValue: supabaseKeys[0] ? localStorage.getItem(supabaseKeys[0])?.substring(0, 50) + '...' : null
+      });
+      
+      // Try to manually parse the session to see if it's valid JSON
+      if (supabaseKeys.length > 0) {
+        try {
+          const sessionStr = localStorage.getItem(supabaseKeys[0]);
+          if (sessionStr) {
+            const sessionObj = JSON.parse(sessionStr);
+            console.log('refreshAuthState: Parsed session from localStorage:', {
+              hasAccessToken: !!sessionObj.access_token,
+              hasUser: !!sessionObj.user,
+              userId: sessionObj.user?.id || 'N/A'
+            });
+          }
+        } catch (e) {
+          console.warn('refreshAuthState: Failed to parse session from localStorage:', e);
         }
       }
+      
+      // First, try to get the session from storage
+      console.log('refreshAuthState: About to call getSession()...');
+      let sessionData: { session: any } | null = null;
+      let sessionError: any = null;
+      
+      // Add a timeout to getSession() in case it hangs
+      try {
+        const getSessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('getSession timeout after 2 seconds')), 2000)
+        );
+        
+        const result = await Promise.race([getSessionPromise, timeoutPromise]) as any;
+        sessionData = result.data;
+        sessionError = result.error;
+        console.log('refreshAuthState: getSession result:', { 
+          hasSession: !!sessionData.session, 
+          hasError: !!sessionError,
+          sessionToken: sessionData.session?.access_token ? 'Present' : 'Missing',
+          sessionExpiresAt: sessionData.session?.expires_at ? new Date(sessionData.session.expires_at * 1000).toISOString() : 'N/A',
+          sessionUserId: sessionData.session?.user?.id || 'N/A'
+        });
+      } catch (err: any) {
+        console.warn('refreshAuthState: getSession failed or timed out:', err.message);
+        // If getSession fails, try to use the parsed session from localStorage
+        if (supabaseKeys.length > 0) {
+          try {
+            const sessionStr = localStorage.getItem(supabaseKeys[0]);
+            if (sessionStr) {
+              const parsedSession = JSON.parse(sessionStr);
+              console.log('refreshAuthState: Using parsed session from localStorage as fallback');
+              sessionData = { session: parsedSession };
+            }
+          } catch (parseErr) {
+            console.error('refreshAuthState: Failed to parse session from localStorage:', parseErr);
+          }
+        }
+        sessionError = err;
+      }
+      
+      if (sessionError && !sessionData) {
+        console.warn('refreshAuthState: No session available');
+      }
+      
+      // If we have a session, use it. Otherwise, try getUser which will validate the stored session
+      if (sessionData?.session) {
+        // First, try to get user from the session object directly (faster, no network call)
+        const sessionUser = sessionData.session.user;
+        if (sessionUser && sessionUser.id) {
+          console.log('refreshAuthState: Using user from session, userId:', sessionUser.id);
+          this.currentUserId = sessionUser.id;
+          
+          // Try to get name from session user metadata
+          const metaName = (sessionUser.user_metadata as any)?.full_name as string | undefined;
+          if (metaName && metaName.trim()) {
+            this.currentUserName = metaName.trim();
+          } else if (sessionUser.email) {
+            this.currentUserName = sessionUser.email.split('@')[0] ?? null;
+          }
+          
+          // Still try to validate with getUser (but don't block on it)
+          console.log('refreshAuthState: Validating session with getUser (non-blocking)...');
+          supabase.auth.getUser().then(({ data, error }) => {
+            console.log('refreshAuthState: getUser validation result:', { hasUser: !!data?.user, hasError: !!error });
+            if (error) {
+              console.warn('refreshAuthState: Session validation failed:', error);
+              // If validation fails, clear the session
+              if (error.message?.includes('JWT') || error.message?.includes('expired')) {
+                console.log('refreshAuthState: Session expired, signing out...');
+                supabase.auth.signOut();
+                this.currentUserId = null;
+                this.currentUserName = null;
+                this.render();
+              }
+            } else if (data?.user) {
+              // Update with fresh user data if available
+              this.currentUserId = data.user.id;
+              this.render();
+            }
+          }).catch(err => {
+            console.warn('refreshAuthState: getUser validation error (ignored):', err);
+          });
+          
+          console.log('refreshAuthState: Completed successfully, userId:', this.currentUserId);
+          return; // Early return - we've set the user from session
+        }
+        
+        // Fallback: try getUser if session.user is not available
+        console.log('refreshAuthState: Session found but no user in session, validating with getUser...');
+        const { data, error } = await supabase.auth.getUser();
+        console.log('refreshAuthState: getUser result:', { hasUser: !!data?.user, hasError: !!error, userId: data?.user?.id });
+        
+        if (error) {
+          console.warn('refreshAuthState: getUser error (session might be invalid):', error);
+          // If getUser fails, the session might be expired or invalid
+          // Clear the session and reset auth state
+          await supabase.auth.signOut();
+          this.currentUserId = null;
+          this.currentUserName = null;
+          return;
+        }
 
-      this.currentUserName = fullName;
+        const user = data?.user;
+        if (!user) {
+          console.log('refreshAuthState: No user found despite having session');
+          this.currentUserId = null;
+          this.currentUserName = null;
+          return;
+        }
+
+        console.log('refreshAuthState: User found, setting currentUserId to:', user.id);
+        this.currentUserId = user.id;
+
+        // Try to load profile.full_name first
+        let fullName: string | null = null;
+        try {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('full_name')
+            .eq('id', user.id)
+            .maybeSingle();
+          if (profile && typeof profile.full_name === 'string' && profile.full_name.trim()) {
+            fullName = profile.full_name.trim();
+          }
+        } catch {
+          // ignore profile errors
+        }
+
+        if (!fullName) {
+          const metaName = (user.user_metadata as any)?.full_name as string | undefined;
+          if (metaName && metaName.trim()) {
+            fullName = metaName.trim();
+          } else if (user.email) {
+            // Fallback: use the part of the email before @ so header still shows a greeting
+            fullName = user.email.split('@')[0] ?? null;
+          }
+        }
+
+        this.currentUserName = fullName;
+        console.log('refreshAuthState: Completed successfully, userId:', this.currentUserId);
+      } else {
+        console.log('refreshAuthState: No session found');
+        this.currentUserId = null;
+        this.currentUserName = null;
+      }
+    } catch (err) {
+      console.error('refreshAuthState: Error:', err);
+      throw err;
     } finally {
-      // If we already have a valid session, don't leave the user stranded
-      // on auth-only pages – send them back to home.
-      if (
-        this.currentUserId &&
-        (this.currentPage === 'signin' || this.currentPage === 'signup')
-      ) {
-        this.currentPage = 'main';
-        window.location.hash = 'main';
-      }
+      console.log('refreshAuthState: Finally block, currentUserId:', this.currentUserId, 'currentPage:', this.currentPage);
       // Re-render header/page with updated auth state
+      // Note: Navigation is handled by the calling code, not here
+      console.log('refreshAuthState: Calling render()');
       this.render();
+      console.log('refreshAuthState: Render() completed');
     }
   }
 
@@ -1268,26 +1389,29 @@ export class Router {
     const googleBtn = this.appElement.querySelector<HTMLButtonElement>('.auth-google-btn');
     const errorEl = this.appElement.querySelector<HTMLElement>('#auth-error');
     if (!form) {
-      console.error('Sign in form not found!');
+      console.error('Sign-in form not found in attachSignInListeners');
       return;
     }
-    console.log('Sign in form found, attaching listeners...');
+    console.log('Sign-in form found, attaching listeners');
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      console.log('Sign in form submitted');
+      console.log('Form submit event fired');
+      
       if (errorEl) {
         errorEl.textContent = '';
       }
       const emailInput = form.querySelector<HTMLInputElement>('input[type="email"]');
       const passwordInput = form.querySelector<HTMLInputElement>('input[type="password"]');
       if (!emailInput || !passwordInput) {
-        console.error('Email or password input not found');
+        console.error('Email or password inputs not found');
         return;
       }
 
       const email = emailInput.value.trim();
       const password = passwordInput.value;
+      console.log('Attempting sign-in for:', email);
+      
       if (!email || !password) {
         if (errorEl) {
           errorEl.textContent = 'Please enter both email and password.';
@@ -1295,52 +1419,87 @@ export class Router {
         return;
       }
 
-      console.log('Attempting sign in with email:', email);
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      console.log('Sign in result:', error ? 'Error: ' + error.message : 'Success');
-      // Always refresh auth state so we know for sure if there is a session
-      await this.refreshAuthState();
-
-      if (!this.currentUserId) {
-        // No valid session after attempting sign-in → stay on page and show error
-        if (errorEl) {
-          errorEl.textContent =
-            error?.message || 'Email or password is incorrect.';
+      try {
+        console.log('Calling supabase.auth.signInWithPassword...');
+        console.log('Supabase client check:', {
+          hasClient: !!supabase,
+          hasAuth: !!supabase?.auth,
+          url: supabase?.supabaseUrl
+        });
+        
+        console.log('About to call signInWithPassword...');
+        
+        // Try with explicit error handling
+        let result;
+        try {
+          result = await supabase.auth.signInWithPassword({ email, password });
+          console.log('signInWithPassword returned, result:', result);
+        } catch (err) {
+          console.error('signInWithPassword threw an error:', err);
+          if (errorEl) {
+            errorEl.textContent = 'An error occurred during sign-in. Please try again.';
+          }
+          return;
         }
-        return;
-      }
+        
+        const { data, error } = result;
+        console.log('Sign-in response received:', { hasData: !!data, hasError: !!error, errorMessage: error?.message });
+        
+        if (error) {
+          console.error('Sign-in error details:', error);
+          if (errorEl) {
+            errorEl.textContent = error.message || 'Email or password is incorrect.';
+          }
+          return;
+        }
+        
+        console.log('Sign-in successful, data:', data);
+        console.log('Session data:', data?.session);
+        console.log('User data:', data?.user);
+        
+        // Always refresh auth state so we know for sure if there is a session
+        console.log('Calling refreshAuthState...');
+        await this.refreshAuthState();
+        console.log('After refreshAuthState, currentUserId:', this.currentUserId);
+        console.log('Current page:', this.currentPage);
 
-      // If we do have a session (user is signed in), force navigation to home
-      this.currentPage = 'main';
-      window.location.hash = 'main';
-      this.render();
+        if (!this.currentUserId) {
+          // No valid session after attempting sign-in → stay on page and show error
+          console.warn('No userId after sign-in and refreshAuthState');
+          if (errorEl) {
+            errorEl.textContent = 'Email or password is incorrect.';
+          }
+          return;
+        }
+
+        // If we do have a session (user is signed in), force navigation to home
+        console.log('Sign-in successful, navigating to main');
+        this.currentPage = 'main';
+        window.location.hash = 'main';
+        // refreshAuthState's finally block already called render(), but we need to ensure navigation
+        this.render();
+      } catch (err) {
+        console.error('Sign-in exception:', err);
+        if (errorEl) {
+          errorEl.textContent = 'An error occurred during sign-in. Please try again.';
+        }
+      }
     });
 
     if (googleBtn) {
       googleBtn.addEventListener('click', async () => {
-        console.log('Google sign-in button clicked');
         if (errorEl) {
           errorEl.textContent = '';
         }
-        try {
-          const { data, error } = await supabase.auth.signInWithOAuth({
-            provider: 'google',
-            options: {
-              // Use origin+pathname so Supabase can append ?code=... and we still
-              // land back on this SPA (hash routing continues to work afterward).
-              redirectTo: `${window.location.origin}${window.location.pathname}`
-            }
-          });
-          if (error) {
-            console.error('Google sign-in error:', error);
-            if (errorEl) {
-              errorEl.textContent = 'Google sign-in failed: ' + error.message;
-            }
-          } else {
-            console.log('Google sign-in initiated, redirecting...', data);
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            // Use origin+pathname so Supabase can append ?code=... and we still
+            // land back on this SPA (hash routing continues to work afterward).
+            redirectTo: `${window.location.origin}${window.location.pathname}`
           }
-        } catch (err) {
-          console.error('Google sign-in exception:', err);
+        });
+        if (error) {
           if (errorEl) {
             errorEl.textContent = 'Google sign-in failed. Please try again.';
           }
@@ -1744,9 +1903,20 @@ export class Router {
     const chatSendBtn = this.appElement.querySelector('#chat-send') as HTMLButtonElement | null;
     const messagesContainer = this.appElement.querySelector('#chatbox-messages') as HTMLElement | null;
 
-    // Initialize OpenAI client
+    // Initialize OpenAI client (lazy import to avoid breaking the app)
     const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
-    const openai = apiKey && apiKey !== 'your_api_key_here' ? new OpenAI({ apiKey, dangerouslyAllowBrowser: true }) : null;
+    let openai: any = null;
+    try {
+      if (apiKey && apiKey !== 'your_api_key_here') {
+        // Dynamic import to avoid breaking module loading
+        const OpenAIModule = await import('openai');
+        const OpenAI = OpenAIModule.default;
+        openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+      }
+    } catch (error) {
+      console.error('Failed to initialize OpenAI client:', error);
+      openai = null;
+    }
     
     // Log API key status (for debugging)
     if (!apiKey || apiKey === 'your_api_key_here') {

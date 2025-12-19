@@ -25,6 +25,15 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.log('Anon key preview:', supabaseAnonKey.substring(0, 20) + '...');
 }
 
-export const supabase = createClient(supabaseUrl ?? '', supabaseAnonKey ?? '');
+export const supabase = createClient(supabaseUrl ?? '', supabaseAnonKey ?? '', {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    storage: window.localStorage
+    // Don't specify storageKey - use Supabase's default
+  }
+  // Removed custom fetch wrapper - it might be interfering with getSession()
+});
 
 
