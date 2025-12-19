@@ -2604,6 +2604,11 @@ body.auth-background {
   background: rgba(0, 0, 0, 0.85);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
+.viewer-controls-right .selection-color-palette {
+  left: auto;
+  right: 0;
+  transform: none;
+}
 .selection-color-palette[hidden] {
   display: none;
 }

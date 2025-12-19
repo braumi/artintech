@@ -1416,8 +1416,15 @@ export class ThreeApartmentViewer {
       wall.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
           const mesh = child as THREE.Mesh;
+          // Skip doors and windows - only change wall materials
           if (mesh.material instanceof THREE.MeshStandardMaterial) {
-            mesh.material.color.setHex(colorValue);
+            // Check if it's a wall material (not door or window)
+            const isWall = mesh.material.color.getHex() !== 0x8b5a2b && // not door brown
+                          !(mesh.material instanceof THREE.MeshPhysicalMaterial); // not window glass
+            if (isWall) {
+              mesh.material.color.setHex(colorValue);
+              mesh.material.needsUpdate = true;
+            }
           }
         }
       });
