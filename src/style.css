@@ -306,7 +306,7 @@ p {
     display: flex !important;
     position: absolute !important;
     right: 1rem !important;
-    top: 40% !important; /* move burger a bit closer to top on mobile */
+    top: 30% !important; /* move burger a bit closer to top on mobile */
     transform: translateY(-50%) !important;
   }
   .auth-shell {
@@ -338,9 +338,9 @@ p {
     display: block !important;
   }
 
-  /* Landing hero + copy layout on mobile:
+  /* Landing hero + copy layout on mobile (home page only):
      - text centered and shifted up
-     - hero image sits at the bottom as its own section */
+     - hero image sits at the bottom with a soft gradient into the background */
   .landing {
     display: flex;
     flex-direction: column;
@@ -363,7 +363,7 @@ p {
     margin-top: 1.25rem;
   }
 
-  .landing-hero-fixed {
+  .main-page .landing-hero-fixed {
     position: relative !important;
     left: 0;
     right: 0;
@@ -372,9 +372,27 @@ p {
     max-height: 320px;
     margin-top: auto;
     z-index: 0;
+    overflow: hidden;
   }
 
-  .landing-hero-fixed img {
+  .main-page .landing-hero-fixed::before {
+    content: '';
+    position: absolute;
+    top: -40%;
+    left: 0;
+    right: 0;
+    height: 60%;
+    background: linear-gradient(
+      to bottom,
+      #f5f5f5 0%,
+      rgba(245, 245, 245, 0.85) 35%,
+      rgba(245, 245, 245, 0) 100%
+    );
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  .main-page .landing-hero-fixed img {
     width: 100%;
     height: 100%;
     object-fit: cover;
