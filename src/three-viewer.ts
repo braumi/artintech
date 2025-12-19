@@ -1442,28 +1442,35 @@ export class ThreeApartmentViewer {
   }
 
   setFloorTexture(texturePath: string | null): void {
-    if (texturePath === null) {
-      // Reset to original materials
-      this.floors.forEach(floor => {
-        const original = this.originalFloorMaterials.get(floor);
-        if (original) {
-          floor.material = original.clone();
-        }
-      });
-      return;
-    }
+    if (!this.houseModelRoot) return;
     
     const loader = new THREE.TextureLoader();
-    loader.load(texturePath, (texture) => {
+    const textureFile = texturePath === null ? 'wooden_floor.jpg' : 'wooden2_floor.jpg';
+    const textureUrl = `components/textures/${textureFile}`;
+    
+    loader.load(textureUrl, (texture) => {
       texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
       texture.repeat.set(3, 3);
       
-      this.floors.forEach(floor => {
-        if (floor.material instanceof THREE.MeshStandardMaterial) {
-          const newMaterial = floor.material.clone();
-          newMaterial.map = texture;
-          newMaterial.needsUpdate = true;
-          floor.material = newMaterial;
+      // Traverse the house model and update floor materials (same approach as furniture colors)
+      this.houseModelRoot!.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh;
+          const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          materials.forEach(mat => {
+            const m = mat as THREE.Material & {
+              name?: string;
+              map?: THREE.Texture | null;
+            };
+            // Find floor materials - check for wood/floor in material name
+            const name = (m.name ?? '').toLowerCase();
+            if (name.includes('wood') || name.includes('floor') || name.includes('alder')) {
+              if (m instanceof THREE.MeshStandardMaterial || m instanceof THREE.MeshPhongMaterial || m instanceof THREE.MeshLambertMaterial) {
+                m.map = texture;
+                m.needsUpdate = true;
+              }
+            }
+          });
         }
       });
     });

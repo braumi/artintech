@@ -1925,22 +1925,18 @@ export class Router {
       });
     }
     
-    // Floor texture button - toggle between 2 textures
+    // Floor texture button - toggle between wooden_floor.jpg and wooden2_floor.jpg
     const floorTextureBtn = this.appElement.querySelector('#floor-texture-btn') as HTMLButtonElement | null;
     
     if (floorTextureBtn && viewer) {
-      let floorTextureIndex = 0;
-      const floorTextures = [
-        null, // default (original floor material)
-        'components/textures/wooden2_floor.jpg'
-      ];
+      let useWooden2 = false;
       
       floorTextureBtn.addEventListener('click', (event) => {
         event.stopPropagation();
         if (!this.currentPlanId) return;
-        floorTextureIndex = (floorTextureIndex + 1) % floorTextures.length;
-        const texture = floorTextures[floorTextureIndex];
-        viewer.setFloorTexture(texture);
+        useWooden2 = !useWooden2;
+        // Pass null for wooden_floor.jpg (default), or any string for wooden2_floor.jpg
+        viewer.setFloorTexture(useWooden2 ? 'wooden2' : null);
       });
     }
 
