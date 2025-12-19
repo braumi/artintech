@@ -204,6 +204,7 @@ export class ThreeApartmentViewer {
   private houseModelRoot: THREE.Object3D | null = null;
   private originalFloorMaterials: Map<THREE.Mesh, THREE.MeshStandardMaterial> = new Map();
   private wallMaterials: Set<THREE.MeshStandardMaterial> = new Set();
+  private originalFloorTextures: Map<THREE.Material, THREE.Texture | null> = new Map();
 
   mount(container: HTMLElement): void {
     this.dispose();
@@ -322,6 +323,7 @@ export class ThreeApartmentViewer {
     this.wallBounds = [];
     this.wallMaterials.clear();
     this.originalFloorMaterials.clear();
+    this.originalFloorTextures.clear();
     this.houseModelRoot = null;
     this.clearFurniture();
     this.setActiveFurniture(null);
@@ -528,6 +530,7 @@ export class ThreeApartmentViewer {
     box.getCenter(center);
 
     // Ensure key architectural materials (doors, glass) render correctly
+    // Also store original floor textures for restoration
     raw.traverse(child => {
       if (!(child as THREE.Mesh).isMesh) return;
       const mesh = child as THREE.Mesh;
@@ -541,6 +544,33 @@ export class ThreeApartmentViewer {
           map?: THREE.Texture | null;
         };
         const name = (m.name ?? '').toLowerCase();
+        
+        // Store original floor textures
+        const isDoorMaterial = 
+          name.includes('door') || 
+          name.includes('dvere') ||
+          name === 'wood_dvere' ||
+          name === 'glass_dvere' ||
+          name === 'door_material';
+        
+        if (!isDoorMaterial) {
+          const isSpecificFloorMaterial = 
+            name === 'alder_fine_wood_pbr_texture_seamless' ||
+            name === 'laminate_floor' ||
+            name.includes('podloga') ||
+            name.includes('podłoga');
+          
+          const hasFloorTexture = m.map && (
+            (m.map as any).image?.src?.includes('wooden_floor') ||
+            (m.map as any).image?.src?.includes('tile_floor')
+          );
+          
+          if (isSpecificFloorMaterial || hasFloorTexture) {
+            // Store original texture for this material
+            this.originalFloorTextures.set(m, m.map ? m.map.clone() : null);
+          }
+        }
+        
         if (name.includes('door')) {
           m.side = THREE.DoubleSide;
         }
@@ -719,6 +749,7 @@ export class ThreeApartmentViewer {
     this.wallBounds = [];
     this.wallMaterials.clear();
     this.originalFloorMaterials.clear();
+    this.originalFloorTextures.clear();
     this.houseModelRoot = null;
     this.furnitureItems.clear();
     this.selectFurnitureInternal(null, true);
@@ -1451,11 +1482,45 @@ export class ThreeApartmentViewer {
   }
 
   setFloorTexture(texturePath: string | null): void {
-    const loader = new THREE.TextureLoader();
-    const textureFile = texturePath === null ? 'wooden_floor.jpg' : 'wooden2_floor.jpg';
-    const textureUrl = `components/textures/${textureFile}`;
+    // If null, restore original textures
+    if (texturePath === null) {
+      console.log('Restoring original floor textures');
+      
+      // Restore original textures for house model floors
+      if (this.houseModelRoot) {
+        this.houseModelRoot.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            const mesh = child as THREE.Mesh;
+            const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            materials.forEach(mat => {
+              const originalTexture = this.originalFloorTextures.get(mat);
+              if (originalTexture !== undefined) {
+                if (mat instanceof THREE.MeshStandardMaterial || mat instanceof THREE.MeshPhongMaterial || mat instanceof THREE.MeshLambertMaterial) {
+                  mat.map = originalTexture;
+                  mat.needsUpdate = true;
+                }
+              }
+            });
+          }
+        });
+      }
+      
+      // Restore original textures for programmatic floors
+      this.floors.forEach(floor => {
+        const original = this.originalFloorMaterials.get(floor);
+        if (original) {
+          floor.material = original.clone();
+        }
+      });
+      
+      return;
+    }
     
-    console.log('Setting floor texture to:', textureFile, 'houseModelRoot:', !!this.houseModelRoot, 'floors count:', this.floors.length);
+    // Load new texture (wooden2_floor.jpg)
+    const loader = new THREE.TextureLoader();
+    const textureUrl = `components/textures/wooden2_floor.jpg`;
+    
+    console.log('Setting floor texture to: wooden2_floor.jpg');
     
     loader.load(
       textureUrl,
