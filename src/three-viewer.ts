@@ -1520,6 +1520,21 @@ export class ThreeApartmentViewer {
     console.table(materialInfo);
     
     // Update all materials that could be walls - handle MeshStandardMaterial, MeshPhongMaterial, and MeshLambertMaterial
+    // First, collect all meshes that use door materials so we can skip them
+    const doorMeshes = new Set<THREE.Mesh>();
+    if (this.houseModelRoot) {
+      this.houseModelRoot.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh;
+          const childName = (child.name || '').toLowerCase();
+          // Check if the mesh/object itself is named as a door
+          if (childName.includes('door') || childName.includes('dvere') || childName.includes('doorframe')) {
+            doorMeshes.add(mesh);
+          }
+        }
+      });
+    }
+    
     let updatedCount = 0;
     allMaterials.forEach(mat => {
       // Check if it's a material type that has a color property
@@ -1537,20 +1552,36 @@ export class ThreeApartmentViewer {
       const name = (m.name ?? '').toLowerCase();
       const currentColor = m.color.getHex();
       
-      // Skip doors (explicit check by name and color)
-      // Doors are typically brown (0x8b5a2b) or have door-related names
+      // Check if any mesh using this material is a door mesh
+      let isUsedByDoorMesh = false;
+      if (this.houseModelRoot) {
+        this.houseModelRoot.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            const mesh = child as THREE.Mesh;
+            const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            if (materials.includes(mat)) {
+              const childName = (child.name || '').toLowerCase();
+              if (childName.includes('door') || childName.includes('dvere') || childName.includes('doorframe')) {
+                isUsedByDoorMesh = true;
+              }
+            }
+          }
+        });
+      }
+      
+      // Skip doors (explicit check by name, color, and mesh name)
       const isDoorByName = name.includes('door') || name.includes('dvere') || name === 'door_material';
+      
       // Check for brown door colors (0x8b5a2b is the programmatic door color)
-      // Also check for brown-ish colors that might be doors
       const r = (currentColor >> 16) & 0xff;
       const g = (currentColor >> 8) & 0xff;
       const b = currentColor & 0xff;
       // Brown doors typically have: medium red, medium-low green, low blue
       const isDoorByColor = currentColor === 0x8b5a2b || // Exact brown door color
-                           (r >= 0x70 && r <= 0xa0 && g >= 0x40 && g <= 0x70 && b >= 0x20 && b <= 0x50); // Brown range
+                           (r >= 0x6a && r <= 0x9a && g >= 0x3a && g <= 0x6a && b >= 0x1a && b <= 0x4a); // Dark brown range
       
-      if (isDoorByName || isDoorByColor) {
-        console.log('  ⏭️ Skipping door:', m.name, 'Color:', '#' + currentColor.toString(16).padStart(6, '0'));
+      if (isDoorByName || isDoorByColor || isUsedByDoorMesh) {
+        console.log('  ⏭️ Skipping door:', m.name, 'Color:', '#' + currentColor.toString(16).padStart(6, '0'), 'Reason:', isDoorByName ? 'name' : isDoorByColor ? 'color' : 'mesh');
         return;
       }
       
