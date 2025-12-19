@@ -327,9 +327,9 @@ export class Router {
     }
   }
 
-  private init(): void {
+  private async init(): Promise<void> {
     // First, handle potential OAuth redirect responses (e.g., Google)
-    void this.handleOAuthCallback();
+    await this.handleOAuthCallback();
     this.registerAuthListener();
     this.registerGlobalLogout();
 
@@ -344,17 +344,16 @@ export class Router {
       this.handleRouteChange();
     });
 
-    this.render();
+    // Check auth state BEFORE rendering to avoid showing sign-in page if already signed in
+    await this.refreshAuthState();
     
-    // Check auth state after render, and redirect if needed
-    void this.refreshAuthState().then(() => {
-      // If user is signed in and on sign-in/sign-up page, redirect to main
-      if (this.currentUserId && (this.currentPage === 'signin' || this.currentPage === 'signup')) {
-        this.currentPage = 'main';
-        window.location.hash = 'main';
-        this.render();
-      }
-    });
+    // If user is signed in and trying to access sign-in/sign-up page, redirect immediately
+    if (this.currentUserId && (this.currentPage === 'signin' || this.currentPage === 'signup')) {
+      this.currentPage = 'main';
+      window.location.hash = 'main';
+    }
+
+    this.render();
   }
 
   /**
@@ -554,7 +553,12 @@ export class Router {
             Product
           </button>
         </div>
-        <button class="nav-signin" data-page="${authTargetPage}">${authLabel}</button>
+        ${isSignedIn ? `
+          <span style="margin-right: 0.5rem; color: #666;">${authLabel}</span>
+          <button class="auth-logout-btn" style="background: transparent; border: 1px solid #ccc; color: #333; padding: 0.4rem 0.8rem; border-radius: 4px; cursor: pointer; font-size: 0.875rem;">
+            Sign out
+          </button>
+        ` : `<button class="nav-signin" data-page="${authTargetPage}">${authLabel}</button>`}
         <button class="nav-burger" aria-label="Open menu">
           <span></span>
           <span></span>
@@ -563,7 +567,9 @@ export class Router {
         <div class="nav-drawer" aria-hidden="true">
           <button class="nav-drawer__item" data-page="main">Main</button>
           <button class="nav-drawer__item" data-page="product">Product</button>
-          <button class="nav-drawer__item" data-page="${authTargetPage}">${authLabel}</button>
+          ${isSignedIn ? `
+            <button class="nav-drawer__item auth-logout-btn">Sign out</button>
+          ` : `<button class="nav-drawer__item" data-page="${authTargetPage}">${authLabel}</button>`}
         </div>
       </nav>
     `;
@@ -1407,16 +1413,6 @@ export class Router {
     } finally {
       // Re-render header/page with updated auth state
       this.render();
-      
-      // If user is signed in and on sign-in/sign-up page, redirect to main
-      if (this.currentUserId && (this.currentPage === 'signin' || this.currentPage === 'signup')) {
-        // Small delay to ensure render completes
-        setTimeout(() => {
-          this.currentPage = 'main';
-          window.location.hash = 'main';
-          this.render();
-        }, 100);
-      }
     }
   }
 
