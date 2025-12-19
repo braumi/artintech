@@ -1533,23 +1533,23 @@ export class ThreeApartmentViewer {
         return;
       }
       
-      const m = mat as THREE.MeshStandardMaterial | THREE.MeshPhongMaterial | THREE.MeshLambertMaterial & { name?: string; color: THREE.Color };
+      const m = mat as THREE.MeshStandardMaterial | THREE.MeshPhongMaterial | THREE.MeshLambertMaterial & { name?: string; color: THREE.Color; map?: THREE.Texture | null };
       const name = (m.name ?? '').toLowerCase();
       const currentColor = m.color.getHex();
       
-      // Skip doors
-      if (name.includes('door') || name.includes('dvere')) {
+      // Skip doors (explicit check)
+      if (name.includes('door') || name.includes('dvere') || name === 'door_material') {
         console.log('  ⏭️ Skipping door:', m.name);
         return;
       }
       
-      // Skip windows
-      if (name.includes('glass') || name.includes('szklo')) {
+      // Skip windows (explicit check)
+      if (name.includes('glass') || name.includes('szklo') || name === 'glass') {
         console.log('  ⏭️ Skipping window:', m.name);
         return;
       }
       
-      // Skip floors
+      // Skip floors (explicit check)
       if (
         name === 'alder_fine_wood_pbr_texture_seamless' ||
         name === 'laminate_floor' ||
@@ -1564,20 +1564,24 @@ export class ThreeApartmentViewer {
         return;
       }
       
-      // Skip special materials that aren't walls
-      if (
-        name.includes('metal') ||
+      // Skip only very specific special materials (be less restrictive - only skip obvious non-walls)
+      // Allow: black, black_matte, prah, wood.002, (unnamed) - these are likely walls
+      const isSpecialMaterial = 
+        name === 'stainless' ||
+        name === 'marble' ||
+        name === 'plastic' ||
+        name === 'pvc' ||
+        name === 'metal' ||
         name.includes('chrome') ||
-        name.includes('stainless') ||
-        name.includes('marble') ||
-        name.includes('plastic') ||
-        name.includes('tkanina') ||
-        name.includes('drewno') ||
-        (name.includes('black') && !name.includes('matte'))
-      ) {
+        name.includes('tkanina') || // fabric
+        (name.includes('wood') && !name.includes('matte') && name !== 'wood.002'); // wood furniture, but allow wood.002 and matte
+      
+      if (isSpecialMaterial) {
         console.log('  ⏭️ Skipping special material:', m.name);
         return;
       }
+      
+      // Everything else that's not door/window/floor should be a wall - update it!
       
       // Update this material - it should be a wall
       console.log('  ✅ Updating wall:', m.name || '(unnamed)', 'Type:', mat.constructor.name, 'from', '#' + currentColor.toString(16).padStart(6, '0'), 'to', color);
