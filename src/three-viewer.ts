@@ -1416,7 +1416,15 @@ export class ThreeApartmentViewer {
 
   setWallColor(color: string | number): void {
     const targetColor = new THREE.Color(color as any);
-    // Traverse all walls and update materials the same way furniture colors are changed
+    console.log('Setting wall color to:', color, 'Walls count:', this.walls.length);
+    
+    // Update tracked wall materials directly (faster and more reliable)
+    this.wallMaterials.forEach(material => {
+      material.color.copy(targetColor);
+      material.needsUpdate = true;
+    });
+    
+    // Also traverse walls as backup
     this.walls.forEach(wall => {
       wall.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
@@ -1429,10 +1437,11 @@ export class ThreeApartmentViewer {
             };
             // Only change wall materials (MeshStandardMaterial), skip doors and windows
             if (m instanceof THREE.MeshStandardMaterial && m.color) {
-              // Skip door material (brown) and window material (MeshPhysicalMaterial is handled above)
+              // Skip door material (brown) and window material
               const isDoor = m.color.getHex() === 0x8b5a2b;
               if (!isDoor) {
                 m.color.copy(targetColor);
+                m.needsUpdate = true;
               }
             }
           });
@@ -1442,38 +1451,85 @@ export class ThreeApartmentViewer {
   }
 
   setFloorTexture(texturePath: string | null): void {
-    if (!this.houseModelRoot) return;
-    
     const loader = new THREE.TextureLoader();
     const textureFile = texturePath === null ? 'wooden_floor.jpg' : 'wooden2_floor.jpg';
     const textureUrl = `components/textures/${textureFile}`;
     
-    loader.load(textureUrl, (texture) => {
-      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-      texture.repeat.set(3, 3);
-      
-      // Traverse the house model and update floor materials (same approach as furniture colors)
-      this.houseModelRoot!.traverse((child) => {
-        if ((child as THREE.Mesh).isMesh) {
-          const mesh = child as THREE.Mesh;
-          const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-          materials.forEach(mat => {
-            const m = mat as THREE.Material & {
-              name?: string;
-              map?: THREE.Texture | null;
-            };
-            // Find floor materials - check for wood/floor in material name
-            const name = (m.name ?? '').toLowerCase();
-            if (name.includes('wood') || name.includes('floor') || name.includes('alder')) {
-              if (m instanceof THREE.MeshStandardMaterial || m instanceof THREE.MeshPhongMaterial || m instanceof THREE.MeshLambertMaterial) {
-                m.map = texture;
-                m.needsUpdate = true;
-              }
+    console.log('Setting floor texture to:', textureFile, 'houseModelRoot:', !!this.houseModelRoot, 'floors count:', this.floors.length);
+    
+    loader.load(
+      textureUrl,
+      (texture) => {
+        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+        texture.repeat.set(3, 3);
+        
+        // If house model is loaded, update its floor materials
+        if (this.houseModelRoot) {
+          this.houseModelRoot.traverse((child) => {
+            if ((child as THREE.Mesh).isMesh) {
+              const mesh = child as THREE.Mesh;
+              const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+              materials.forEach(mat => {
+                const m = mat as THREE.Material & {
+                  name?: string;
+                  map?: THREE.Texture | null;
+                };
+                // Find floor materials - be very specific to avoid matching doors
+                const name = (m.name ?? '').toLowerCase();
+                
+                // Explicitly exclude ALL door materials first
+                const isDoorMaterial = 
+                  name.includes('door') || 
+                  name.includes('dvere') || // Czech/Slovak for door
+                  name === 'wood_dvere' ||
+                  name === 'glass_dvere' ||
+                  name === 'door_material';
+                
+                if (isDoorMaterial) return; // Skip doors completely
+                
+                // Match only specific floor materials for each house:
+                // House 1: "Alder_fine_wood_PBR_texture_seamless"
+                // House 2: "PODLOGA_TERAKOTA.001", "Podloga_nowa.001", "podłoga_łazienka.002"
+                // House 3: "Laminate_floor"
+                const isSpecificFloorMaterial = 
+                  name === 'alder_fine_wood_pbr_texture_seamless' ||
+                  name === 'laminate_floor' ||
+                  name.includes('podloga') || // Polish for floor
+                  name.includes('podłoga'); // Polish for floor (with special character)
+                
+                // Also check if material already has a floor texture (wooden_floor.jpg or tile_floor.png)
+                const hasFloorTexture = m.map && (
+                  (m.map as any).image?.src?.includes('wooden_floor') ||
+                  (m.map as any).image?.src?.includes('tile_floor')
+                );
+                
+                const isFloorMaterial = isSpecificFloorMaterial || hasFloorTexture;
+                
+                if (isFloorMaterial) {
+                  if (m instanceof THREE.MeshStandardMaterial || m instanceof THREE.MeshPhongMaterial || m instanceof THREE.MeshLambertMaterial) {
+                    console.log('Updating floor material:', m.name);
+                    m.map = texture;
+                    m.needsUpdate = true;
+                  }
+                }
+              });
             }
           });
         }
-      });
-    });
+        
+        // Also update programmatically created floors
+        this.floors.forEach(floor => {
+          if (floor.material instanceof THREE.MeshStandardMaterial) {
+            floor.material.map = texture;
+            floor.material.needsUpdate = true;
+          }
+        });
+      },
+      undefined,
+      (error) => {
+        console.error('Failed to load floor texture:', error);
+      }
+    );
   }
 }
 
