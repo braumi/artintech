@@ -306,7 +306,7 @@ p {
     display: flex !important;
     position: absolute !important;
     right: 1rem !important;
-    top: 50% !important;
+    top: 40% !important; /* move burger a bit closer to top on mobile */
     transform: translateY(-50%) !important;
   }
   .auth-shell {
@@ -336,6 +336,49 @@ p {
   .demo-hero-fixed,
   .landing-hero-fixed {
     display: block !important;
+  }
+
+  /* Landing hero + copy layout on mobile:
+     - text centered and shifted up
+     - hero image sits at the bottom as its own section */
+  .landing {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  .landing-shell {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2.5rem 1rem 1.5rem 1rem !important;
+  }
+
+  .landing-header {
+    text-align: center;
+  }
+
+  .landing-lead {
+    margin-top: 1.25rem;
+  }
+
+  .landing-hero-fixed {
+    position: relative !important;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 35vh;
+    max-height: 320px;
+    margin-top: auto;
+    z-index: 0;
+  }
+
+  .landing-hero-fixed img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center bottom;
   }
   
   /* Profile page mobile styles */
@@ -2702,26 +2745,27 @@ body.auth-background {
   flex: 1;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
+  align-items: center;
   justify-content: flex-start;
   position: relative;
   overflow: hidden;
-  padding: 2.5rem 0 0 0;
+  padding: 2rem 0 0 0;
 }
 
 .landing-shell {
   flex: 1;
   width: 100%;
   max-width: none;
-  padding: 3rem 5rem 2.5rem 2rem;
+  padding: 3rem 2rem 2.5rem 2rem;
   display: flex;
   flex-direction: column;
-  gap: 3rem;
+  align-items: center;
+  gap: 2rem;
 }
 
 .landing-header {
-  max-width: 520px;
-  text-align: left;
+  max-width: 640px;
+  text-align: center;
 }
 
 .landing-kicker {
@@ -2750,13 +2794,13 @@ body.auth-background {
 }
 
 .landing-lead {
-  position: absolute;
-  bottom: 5rem;
-  left: 2rem;
-  margin: 0;
-  max-width: 32rem;
+  position: static;
+  margin: 1.75rem auto 0 auto;
+  max-width: 34rem;
   font-size: 0.98rem;
+  line-height: 1.7;
   color: var(--secondary-black);
+  text-align: center;
 }
 
 .landing-shell {
@@ -2782,6 +2826,11 @@ body.auth-background {
   height: 100%;
   object-fit: cover;
   object-position: center bottom;
+}
+
+/* Ensure home-page background image is visible behind content */
+.main-page .landing-hero-fixed {
+  z-index: 0;
 }
 
 /* Darken/tint background so foreground UI stands out (demo + auth pages) */
