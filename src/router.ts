@@ -242,35 +242,71 @@ export class Router {
   }
 
   /**
-   * Handle OAuth callback - Clean URL immediately, then let Supabase process tokens
+   * Handle OAuth callback - Extract tokens, set session, then clean URL
    */
   private async handleOAuthCallback(): Promise<boolean> {
     const hash = window.location.hash;
-    const hasOAuthTokens = hash && (hash.includes('access_token=') || hash.includes('code='));
-    
-    if (!hasOAuthTokens) {
+    if (!hash || (!hash.includes('access_token=') && !hash.includes('code='))) {
       return false;
     }
     
-    // IMMEDIATELY clean the URL - remove all OAuth tokens from hash
-    // Supabase has already processed them via detectSessionInUrl
-    const cleanUrl = `${window.location.origin}${window.location.pathname}#main`;
-    window.history.replaceState({}, '', cleanUrl);
-    this.currentPage = 'main';
+    // Extract tokens from hash
+    const hashParams = new URLSearchParams(hash.substring(1)); // Remove leading #
+    const accessToken = hashParams.get('access_token');
+    const refreshToken = hashParams.get('refresh_token');
+    const code = hashParams.get('code');
     
-    // Now check if session was set
-    const { data: sessionData } = await supabase.auth.getSession();
-    
-    if (sessionData.session) {
-      await this.refreshAuthState();
-      this.render();
-      return true;
+    // Handle code-based flow (PKCE)
+    if (code) {
+      try {
+        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) {
+          console.error('OAuth code exchange failed:', error);
+          window.history.replaceState({}, '', `${window.location.origin}${window.location.pathname}#signin`);
+          return false;
+        }
+        // Clean URL after successful exchange
+        window.history.replaceState({}, '', `${window.location.origin}${window.location.pathname}#main`);
+        this.currentPage = 'main';
+        await this.refreshAuthState();
+        this.render();
+        return true;
+      } catch (err) {
+        console.error('OAuth code exchange exception:', err);
+        window.history.replaceState({}, '', `${window.location.origin}${window.location.pathname}#signin`);
+        return false;
+      }
     }
     
-    // No session - redirect to sign-in
-    this.currentPage = 'signin';
-    window.location.hash = 'signin';
-    this.render();
+    // Handle token-based flow
+    if (accessToken && refreshToken) {
+      try {
+        const { data, error } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken
+        });
+        
+        if (error) {
+          console.error('OAuth session set failed:', error);
+          window.history.replaceState({}, '', `${window.location.origin}${window.location.pathname}#signin`);
+          return false;
+        }
+        
+        // Clean URL after successful session set
+        window.history.replaceState({}, '', `${window.location.origin}${window.location.pathname}#main`);
+        this.currentPage = 'main';
+        await this.refreshAuthState();
+        this.render();
+        return true;
+      } catch (err) {
+        console.error('OAuth session set exception:', err);
+        window.history.replaceState({}, '', `${window.location.origin}${window.location.pathname}#signin`);
+        return false;
+      }
+    }
+    
+    // No valid tokens found
+    window.history.replaceState({}, '', `${window.location.origin}${window.location.pathname}#signin`);
     return false;
   }
 
