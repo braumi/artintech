@@ -553,12 +553,7 @@ export class Router {
             Product
           </button>
         </div>
-        ${isSignedIn ? `
-          <span style="margin-right: 0.5rem; color: #666;">${authLabel}</span>
-          <button class="auth-logout-btn" style="background: transparent; border: 1px solid #ccc; color: #333; padding: 0.4rem 0.8rem; border-radius: 4px; cursor: pointer; font-size: 0.875rem;">
-            Sign out
-          </button>
-        ` : `<button class="nav-signin" data-page="${authTargetPage}">${authLabel}</button>`}
+        <button class="nav-signin" data-page="${authTargetPage}">${authLabel}</button>
         <button class="nav-burger" aria-label="Open menu">
           <span></span>
           <span></span>
@@ -567,9 +562,7 @@ export class Router {
         <div class="nav-drawer" aria-hidden="true">
           <button class="nav-drawer__item" data-page="main">Main</button>
           <button class="nav-drawer__item" data-page="product">Product</button>
-          ${isSignedIn ? `
-            <button class="nav-drawer__item auth-logout-btn">Sign out</button>
-          ` : `<button class="nav-drawer__item" data-page="${authTargetPage}">${authLabel}</button>`}
+          <button class="nav-drawer__item" data-page="${authTargetPage}">${authLabel}</button>
         </div>
       </nav>
     `;
@@ -1196,16 +1189,35 @@ export class Router {
 
   private async handleLogout(target?: HTMLButtonElement | null): Promise<void> {
     if (target) target.disabled = true;
+    console.log('🚪 Logging out...');
     try {
-      // Use global scope to ensure all sessions are cleared
-      // (Supabase v2 signOut accepts an options object)
-      await supabase.auth.signOut({ scope: 'global' } as any);
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Logout error:', error);
-    } finally {
+      // Sign out from Supabase (this clears the session from localStorage)
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.error('Logout error from Supabase:', error);
+      } else {
+        console.log('✅ Successfully signed out from Supabase');
+      }
+      
+      // Clear local state
       this.currentUserId = null;
       this.currentUserName = null;
+      
+      // Clear any Supabase session keys from localStorage manually (just to be sure)
+      const supabaseKeys = Object.keys(localStorage).filter(key => key.startsWith('sb-') && key.includes('auth'));
+      supabaseKeys.forEach(key => {
+        console.log('🗑️ Removing localStorage key:', key);
+        localStorage.removeItem(key);
+      });
+      
+      console.log('✅ Logout complete, redirecting to sign-in page');
+    } catch (error) {
+      console.error('❌ Logout error:', error);
+      // Even if there's an error, clear local state
+      this.currentUserId = null;
+      this.currentUserName = null;
+    } finally {
+      // Always redirect to sign-in page
       this.currentPage = 'signin';
       window.location.hash = 'signin';
       this.render();
