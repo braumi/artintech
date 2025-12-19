@@ -287,49 +287,70 @@ export class Router {
     // But we need to clean up the URL after Supabase processes it
     const hash = window.location.hash;
     if (hash && hash.includes('access_token=')) {
-      console.log('OAuth tokens detected in hash, processing...');
+      console.log('🔵 OAuth tokens detected in hash, processing...');
+      console.log('Hash preview:', hash.substring(0, 100) + '...');
       
       // Extract tokens from hash and set session explicitly to ensure correct account
       const hashParams = new URLSearchParams(hash.substring(1)); // Remove #
       const accessToken = hashParams.get('access_token');
       const refreshToken = hashParams.get('refresh_token');
       
+      console.log('Tokens found:', { 
+        hasAccessToken: !!accessToken, 
+        hasRefreshToken: !!refreshToken,
+        accessTokenLength: accessToken?.length || 0
+      });
+      
       if (accessToken && refreshToken) {
         try {
           // Set the session explicitly to ensure we get the correct user
+          console.log('Setting OAuth session...');
           const { data, error } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken
           });
           
           if (error) {
-            console.error('Failed to set OAuth session:', error);
+            console.error('❌ Failed to set OAuth session:', error);
+            console.error('Error details:', {
+              message: error.message,
+              status: error.status,
+              name: error.name
+            });
             return;
           }
           
-          console.log('OAuth session set successfully, user:', data.user?.email);
+          console.log('✅ OAuth session set successfully');
+          console.log('User:', data.user?.email || data.user?.id);
           
           // Clean the URL immediately - remove all OAuth parameters from hash
           // Navigate to main page after successful OAuth
           this.currentPage = 'main';
           const cleanUrl = `${window.location.origin}${window.location.pathname}#main`;
           window.history.replaceState({}, '', cleanUrl);
+          console.log('✅ URL cleaned, redirecting to main');
           
           // Update auth state
           await this.refreshAuthState();
           
           // Render the page
           this.render();
-        } catch (err) {
-          console.error('Exception during OAuth session setup:', err);
+        } catch (err: any) {
+          console.error('❌ Exception during OAuth session setup:', err);
+          console.error('Error details:', {
+            message: err?.message,
+            stack: err?.stack
+          });
         }
+      } else {
+        console.warn('⚠️ OAuth tokens in hash but missing access_token or refresh_token');
       }
     }
   }
 
-  private init(): void {
+  private async init(): Promise<void> {
     // First, handle potential OAuth redirect responses (e.g., Google)
-    void this.handleOAuthCallback();
+    await this.handleOAuthCallback();
     this.registerAuthListener();
     this.registerGlobalLogout();
 
@@ -344,8 +365,16 @@ export class Router {
       this.handleRouteChange();
     });
 
+    // Check auth state BEFORE rendering to avoid showing sign-in page if already signed in
+    await this.refreshAuthState();
+    
+    // If user is signed in and trying to access sign-in/sign-up page, redirect immediately
+    if (this.currentUserId && (this.currentPage === 'signin' || this.currentPage === 'signup')) {
+      this.currentPage = 'main';
+      window.location.hash = 'main';
+    }
+
     this.render();
-    void this.refreshAuthState();
   }
 
   /**
@@ -366,6 +395,13 @@ export class Router {
       if (event === 'SIGNED_IN' && (this.currentPage === 'signin' || this.currentPage === 'signup')) {
         this.currentPage = 'main';
         window.location.hash = 'main';
+        this.render();
+      }
+      
+      // On sign-out, redirect to sign-in page if not already there
+      if (event === 'SIGNED_OUT' && this.currentPage !== 'signin' && this.currentPage !== 'signup') {
+        this.currentPage = 'signin';
+        window.location.hash = 'signin';
         this.render();
       }
     });
@@ -407,6 +443,14 @@ export class Router {
       document.body.classList.add('main-background');
       this.initHeroAnimation();
     } else if (this.currentPage === 'signin' || this.currentPage === 'signup') {
+      // If user is already signed in and tries to access sign-in/sign-up page, redirect to main
+      if (this.currentUserId) {
+        this.currentPage = 'main';
+        window.location.hash = 'main';
+        // Re-render with main page instead
+        this.render();
+        return;
+      }
       document.body.classList.add('auth-background');
     } else {
       // product, checkout, profile pages use demo-background
@@ -607,6 +651,17 @@ export class Router {
   }
 
   private getSignInPageContent(): string {
+    // If user is already signed in, show a message with sign out option
+    const isSignedIn = !!this.currentUserId;
+    const signOutSection = isSignedIn ? `
+      <div style="text-align: center; padding: 1rem 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 1.5rem;">
+        <p style="margin-bottom: 1rem; color: #666;">You're already signed in as <strong>${this.currentUserName || 'User'}</strong></p>
+        <button type="button" class="auth-logout-btn" style="background: transparent; border: 1px solid #ccc; color: #333; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">
+          Sign out
+        </button>
+      </div>
+    ` : '';
+    
     return `
       <div class="page auth-page">
         <section class="auth-hero-fixed">
@@ -621,7 +676,8 @@ export class Router {
             <p class="auth-subtitle">
               Pick up where you left off, and keep shaping the rooms you\u2019re dreaming of.
             </p>
-            <form class="auth-form" novalidate>
+            ${signOutSection}
+            ${isSignedIn ? '' : `<form class="auth-form" novalidate>`}
               <label class="auth-field">
                 <span>Email</span>
                 <input type="email" placeholder="you@example.com" />
@@ -1154,16 +1210,50 @@ export class Router {
 
   private async handleLogout(target?: HTMLButtonElement | null): Promise<void> {
     if (target) target.disabled = true;
+    console.log('🚪 Logging out...');
+    
     try {
-      // Use global scope to ensure all sessions are cleared
-      // (Supabase v2 signOut accepts an options object)
-      await supabase.auth.signOut({ scope: 'global' } as any);
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Logout error:', error);
-    } finally {
+      // Clear local state first
       this.currentUserId = null;
       this.currentUserName = null;
+      
+      // Clear any Supabase session keys from localStorage manually first
+      const supabaseKeys = Object.keys(localStorage).filter(key => key.startsWith('sb-') && key.includes('auth'));
+      console.log('🗑️ Found Supabase keys in localStorage:', supabaseKeys);
+      supabaseKeys.forEach(key => {
+        console.log('🗑️ Removing localStorage key:', key);
+        localStorage.removeItem(key);
+      });
+      
+      // Sign out from Supabase (this should also clear the session)
+      try {
+        const { error } = await supabase.auth.signOut();
+        if (error) {
+          console.error('⚠️ Logout error from Supabase (continuing anyway):', error);
+        } else {
+          console.log('✅ Successfully signed out from Supabase');
+        }
+      } catch (signOutError) {
+        console.error('⚠️ Exception during Supabase signOut (continuing anyway):', signOutError);
+      }
+      
+      // Double-check: clear localStorage again after signOut
+      const remainingKeys = Object.keys(localStorage).filter(key => key.startsWith('sb-') && key.includes('auth'));
+      if (remainingKeys.length > 0) {
+        console.log('🗑️ Removing remaining Supabase keys:', remainingKeys);
+        remainingKeys.forEach(key => localStorage.removeItem(key));
+      }
+      
+      console.log('✅ Logout complete, redirecting to sign-in page');
+    } catch (error) {
+      console.error('❌ Logout error:', error);
+      // Even if there's an error, clear local state and localStorage
+      this.currentUserId = null;
+      this.currentUserName = null;
+      const supabaseKeys = Object.keys(localStorage).filter(key => key.startsWith('sb-') && key.includes('auth'));
+      supabaseKeys.forEach(key => localStorage.removeItem(key));
+    } finally {
+      // Always redirect to sign-in page and re-render
       this.currentPage = 'signin';
       window.location.hash = 'signin';
       this.render();
@@ -1448,13 +1538,26 @@ export class Router {
           errorEl.textContent = '';
         }
         
-        const { error } = await supabase.auth.signInWithOAuth({
+        console.log('🔵 Google sign-in initiated...');
+        const redirectUrl = `${window.location.origin}${window.location.pathname}#signin`;
+        console.log('Redirect URL:', redirectUrl);
+        
+        const { data, error } = await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: {
-            // Redirect to the current page, Supabase will append tokens to hash
-            redirectTo: `${window.location.origin}${window.location.pathname}${window.location.hash || '#signin'}`
+            // Redirect to the sign-in page with hash, Supabase will append tokens to hash
+            redirectTo: redirectUrl
           }
         });
+        
+        if (error) {
+          console.error('❌ Google OAuth error:', error);
+          if (errorEl) {
+            errorEl.textContent = error.message || 'Google sign-in failed. Please try again.';
+          }
+        } else {
+          console.log('✅ Google OAuth redirect initiated:', data);
+        }
         if (error) {
           if (errorEl) {
             errorEl.textContent = 'Google sign-in failed. Please try again.';
@@ -1862,25 +1965,34 @@ export class Router {
     // Initialize OpenAI client (lazy import to avoid breaking the app)
     const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
     let openai: any = null;
+    
+    // Log environment variable status for debugging
+    console.log('🔍 OpenAI initialization check:');
+    console.log('  - VITE_OPENAI_API_KEY exists:', !!apiKey);
+    console.log('  - Key length:', apiKey?.length || 0);
+    console.log('  - Key starts with:', apiKey?.substring(0, 7) || 'N/A');
+    console.log('  - All VITE_ env vars:', Object.keys(import.meta.env).filter(k => k.startsWith('VITE_')));
+    
     try {
-      if (apiKey && apiKey !== 'your_api_key_here') {
+      if (apiKey && apiKey !== 'your_api_key_here' && apiKey.trim().length > 0) {
         // Dynamic import to avoid breaking module loading
         const OpenAIModule = await import('openai');
         const OpenAI = OpenAIModule.default;
-        openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+        const trimmedKey = apiKey.trim();
+        openai = new OpenAI({ apiKey: trimmedKey, dangerouslyAllowBrowser: true });
+        console.log('✅ OpenAI client initialized successfully');
+      } else {
+        console.warn('⚠️ OpenAI API key not configured or invalid. Using fallback pattern matching.');
+        console.warn('To enable AI: Add VITE_OPENAI_API_KEY=sk-your-key to Netlify environment variables');
       }
-    } catch (error) {
-      console.error('Failed to initialize OpenAI client:', error);
+    } catch (error: any) {
+      console.error('❌ Failed to initialize OpenAI client:', error);
+      console.error('Error details:', {
+        message: error?.message,
+        name: error?.name,
+        stack: error?.stack
+      });
       openai = null;
-    }
-    
-    // Log API key status (for debugging)
-    if (!apiKey || apiKey === 'your_api_key_here') {
-      console.log('⚠️ OpenAI API key not configured. Using fallback pattern matching.');
-      console.log('To enable AI: Add VITE_OPENAI_API_KEY=sk-your-key to .env file');
-    } else {
-      console.log('✅ OpenAI API key found. AI chat enabled.');
-      console.log('Key preview:', apiKey.substring(0, 7) + '...' + apiKey.substring(apiKey.length - 4));
     }
     
     // Store conversation history for context
@@ -2231,12 +2343,34 @@ Be friendly, helpful, enthusiastic, and conversational. Make your responses feel
             }
           ] : undefined;
 
-          const completion = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
-            messages: conversationHistory as any,
-            ...(tools ? { tools, tool_choice: 'auto' } : {}),
-            temperature: 0.7,
-          });
+          console.log('🤖 Sending request to OpenAI...');
+          console.log('  - Model: gpt-4o-mini');
+          console.log('  - Messages count:', conversationHistory.length);
+          console.log('  - Tools available:', !!tools);
+          
+          let completion;
+          try {
+            completion = await openai.chat.completions.create({
+              model: 'gpt-4o-mini',
+              messages: conversationHistory as any,
+              ...(tools ? { tools, tool_choice: 'auto' } : {}),
+              temperature: 0.7,
+            });
+            
+            console.log('✅ OpenAI response received:', {
+              hasChoices: !!completion.choices,
+              choicesCount: completion.choices?.length || 0
+            });
+          } catch (apiError: any) {
+            console.error('❌ OpenAI API call failed:', apiError);
+            console.error('Error details:', {
+              message: apiError?.message,
+              status: apiError?.status,
+              code: apiError?.code,
+              type: apiError?.type
+            });
+            throw apiError; // Re-throw to be caught by outer try-catch
+          }
 
           const messageResponse = completion.choices[0]?.message;
           let responseText = '';
@@ -2447,10 +2581,14 @@ Be friendly, helpful, enthusiastic, and conversational. Make your responses feel
         }
         
         let errorMessage = "I'm sorry, I encountered an error. Please try again.";
-        if (error?.message?.includes('API key')) {
-          errorMessage = "API key error. Please check your OpenAI API key in the .env file.";
-        } else if (error?.message?.includes('rate limit')) {
+        if (error?.message?.includes('API key') || error?.status === 401) {
+          errorMessage = "API key error. Please check your OpenAI API key in Netlify environment variables.";
+        } else if (error?.message?.includes('rate limit') || error?.status === 429) {
           errorMessage = "Rate limit exceeded. Please wait a moment and try again.";
+        } else if (error?.message?.includes('network') || error?.message?.includes('fetch')) {
+          errorMessage = "Network error. Please check your internet connection and try again.";
+        } else if (error?.message) {
+          errorMessage = `Error: ${error.message}`;
         }
         
         const aiMessage = document.createElement('div');
