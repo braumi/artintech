@@ -345,7 +345,16 @@ export class Router {
     });
 
     this.render();
-    void this.refreshAuthState();
+    
+    // Check auth state after render, and redirect if needed
+    void this.refreshAuthState().then(() => {
+      // If user is signed in and on sign-in/sign-up page, redirect to main
+      if (this.currentUserId && (this.currentPage === 'signin' || this.currentPage === 'signup')) {
+        this.currentPage = 'main';
+        window.location.hash = 'main';
+        this.render();
+      }
+    });
   }
 
   /**
@@ -648,7 +657,7 @@ export class Router {
               Pick up where you left off, and keep shaping the rooms you\u2019re dreaming of.
             </p>
             ${signOutSection}
-            <form class="auth-form" novalidate>
+            ${isSignedIn ? '' : `<form class="auth-form" novalidate>`}
               <label class="auth-field">
                 <span>Email</span>
                 <input type="email" placeholder="you@example.com" />
@@ -1398,6 +1407,16 @@ export class Router {
     } finally {
       // Re-render header/page with updated auth state
       this.render();
+      
+      // If user is signed in and on sign-in/sign-up page, redirect to main
+      if (this.currentUserId && (this.currentPage === 'signin' || this.currentPage === 'signup')) {
+        // Small delay to ensure render completes
+        setTimeout(() => {
+          this.currentPage = 'main';
+          window.location.hash = 'main';
+          this.render();
+        }, 100);
+      }
     }
   }
 
@@ -1889,25 +1908,34 @@ export class Router {
     // Initialize OpenAI client (lazy import to avoid breaking the app)
     const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
     let openai: any = null;
+    
+    // Log environment variable status for debugging
+    console.log('🔍 OpenAI initialization check:');
+    console.log('  - VITE_OPENAI_API_KEY exists:', !!apiKey);
+    console.log('  - Key length:', apiKey?.length || 0);
+    console.log('  - Key starts with:', apiKey?.substring(0, 7) || 'N/A');
+    console.log('  - All VITE_ env vars:', Object.keys(import.meta.env).filter(k => k.startsWith('VITE_')));
+    
     try {
-      if (apiKey && apiKey !== 'your_api_key_here') {
+      if (apiKey && apiKey !== 'your_api_key_here' && apiKey.trim().length > 0) {
         // Dynamic import to avoid breaking module loading
         const OpenAIModule = await import('openai');
         const OpenAI = OpenAIModule.default;
-        openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+        const trimmedKey = apiKey.trim();
+        openai = new OpenAI({ apiKey: trimmedKey, dangerouslyAllowBrowser: true });
+        console.log('✅ OpenAI client initialized successfully');
+      } else {
+        console.warn('⚠️ OpenAI API key not configured or invalid. Using fallback pattern matching.');
+        console.warn('To enable AI: Add VITE_OPENAI_API_KEY=sk-your-key to Netlify environment variables');
       }
-    } catch (error) {
-      console.error('Failed to initialize OpenAI client:', error);
+    } catch (error: any) {
+      console.error('❌ Failed to initialize OpenAI client:', error);
+      console.error('Error details:', {
+        message: error?.message,
+        name: error?.name,
+        stack: error?.stack
+      });
       openai = null;
-    }
-    
-    // Log API key status (for debugging)
-    if (!apiKey || apiKey === 'your_api_key_here') {
-      console.log('⚠️ OpenAI API key not configured. Using fallback pattern matching.');
-      console.log('To enable AI: Add VITE_OPENAI_API_KEY=sk-your-key to .env file');
-    } else {
-      console.log('✅ OpenAI API key found. AI chat enabled.');
-      console.log('Key preview:', apiKey.substring(0, 7) + '...' + apiKey.substring(apiKey.length - 4));
     }
     
     // Store conversation history for context
@@ -2258,12 +2286,34 @@ Be friendly, helpful, enthusiastic, and conversational. Make your responses feel
             }
           ] : undefined;
 
-          const completion = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
-            messages: conversationHistory as any,
-            ...(tools ? { tools, tool_choice: 'auto' } : {}),
-            temperature: 0.7,
-          });
+          console.log('🤖 Sending request to OpenAI...');
+          console.log('  - Model: gpt-4o-mini');
+          console.log('  - Messages count:', conversationHistory.length);
+          console.log('  - Tools available:', !!tools);
+          
+          let completion;
+          try {
+            completion = await openai.chat.completions.create({
+              model: 'gpt-4o-mini',
+              messages: conversationHistory as any,
+              ...(tools ? { tools, tool_choice: 'auto' } : {}),
+              temperature: 0.7,
+            });
+            
+            console.log('✅ OpenAI response received:', {
+              hasChoices: !!completion.choices,
+              choicesCount: completion.choices?.length || 0
+            });
+          } catch (apiError: any) {
+            console.error('❌ OpenAI API call failed:', apiError);
+            console.error('Error details:', {
+              message: apiError?.message,
+              status: apiError?.status,
+              code: apiError?.code,
+              type: apiError?.type
+            });
+            throw apiError; // Re-throw to be caught by outer try-catch
+          }
 
           const messageResponse = completion.choices[0]?.message;
           let responseText = '';
@@ -2474,10 +2524,14 @@ Be friendly, helpful, enthusiastic, and conversational. Make your responses feel
         }
         
         let errorMessage = "I'm sorry, I encountered an error. Please try again.";
-        if (error?.message?.includes('API key')) {
-          errorMessage = "API key error. Please check your OpenAI API key in the .env file.";
-        } else if (error?.message?.includes('rate limit')) {
+        if (error?.message?.includes('API key') || error?.status === 401) {
+          errorMessage = "API key error. Please check your OpenAI API key in Netlify environment variables.";
+        } else if (error?.message?.includes('rate limit') || error?.status === 429) {
           errorMessage = "Rate limit exceeded. Please wait a moment and try again.";
+        } else if (error?.message?.includes('network') || error?.message?.includes('fetch')) {
+          errorMessage = "Network error. Please check your internet connection and try again.";
+        } else if (error?.message) {
+          errorMessage = `Error: ${error.message}`;
         }
         
         const aiMessage = document.createElement('div');
