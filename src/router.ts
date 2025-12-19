@@ -918,6 +918,35 @@ export class Router {
               </div>
             </section>
           </div>
+          
+          <!-- Contact modal for Premium plans -->
+          <div class="contact-modal" id="contact-modal" aria-hidden="true">
+            <div class="contact-modal__backdrop"></div>
+            <div class="contact-modal__dialog" role="dialog" aria-modal="true">
+              <button class="contact-modal__close" type="button" aria-label="Close contact form">&times;</button>
+              <header class="contact-modal__header">
+                <h2>Talk to us about Premium</h2>
+                <p>Leave your details and we\u2019ll get in touch to help you choose the right plan.</p>
+              </header>
+              <form class="contact-modal__form">
+                <label class="contact-modal__field">
+                  <span>Name</span>
+                  <input type="text" placeholder="Your name" />
+                </label>
+                <label class="contact-modal__field">
+                  <span>Email</span>
+                  <input type="email" placeholder="you@example.com" />
+                </label>
+                <label class="contact-modal__field">
+                  <span>What are you planning?</span>
+                  <textarea placeholder="Tell us briefly about your project"></textarea>
+                </label>
+                <button type="submit" class="auth-primary-btn contact-modal__submit">
+                  Request contact
+                </button>
+              </form>
+            </div>
+          </div>
         </main>
       </div>
     `;
@@ -1587,6 +1616,36 @@ export class Router {
 
   private attachProfileListeners(): void {
     // (Logout handled globally in attachEventListeners)
+
+    const contactModal = this.appElement.querySelector<HTMLElement>('#contact-modal');
+    if (!contactModal) return;
+
+    const contactBackdrop = contactModal.querySelector<HTMLElement>('.contact-modal__backdrop');
+    const contactClose = contactModal.querySelector<HTMLButtonElement>('.contact-modal__close');
+    const premiumBtn = this.appElement.querySelector<HTMLButtonElement>('.profile-plan-card-premium .profile-plan-btn');
+    const plusBtn = Array.from(this.appElement.querySelectorAll<HTMLButtonElement>('.profile-plan-card .profile-plan-btn'))[2] ?? null;
+
+    const setContactOpen = (open: boolean) => {
+      contactModal.classList.toggle('open', open);
+      contactModal.setAttribute('aria-hidden', open ? 'false' : 'true');
+      document.body.style.overflow = open ? 'hidden' : '';
+    };
+
+    const openContact = () => setContactOpen(true);
+    const closeContact = () => setContactOpen(false);
+
+    premiumBtn?.addEventListener('click', (event) => {
+      event.preventDefault();
+      openContact();
+    });
+
+    plusBtn?.addEventListener('click', (event) => {
+      event.preventDefault();
+      openContact();
+    });
+
+    contactBackdrop?.addEventListener('click', () => closeContact());
+    contactClose?.addEventListener('click', () => closeContact());
   }
 
   private async attachProductEventListeners(): Promise<void> {
