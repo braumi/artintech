@@ -288,17 +288,54 @@ export class Router {
     const hash = window.location.hash;
     if (hash && hash.includes('access_token=')) {
       console.log('🔵 OAuth tokens detected in hash, processing...');
-      console.log('Hash preview:', hash.substring(0, 100) + '...');
+      console.log('Full hash:', hash);
       
-      // Extract tokens from hash and set session explicitly to ensure correct account
-      const hashParams = new URLSearchParams(hash.substring(1)); // Remove #
+      // Handle case where hash might be like "#signin#access_token=..." (double hash)
+      // Split by # and find the part that contains access_token
+      const hashParts = hash.split('#').filter(part => part.length > 0);
+      console.log('Hash parts:', hashParts);
+      
+      // Find the part that contains access_token
+      let tokenString = '';
+      for (const part of hashParts) {
+        if (part.includes('access_token=')) {
+          tokenString = part;
+          break;
+        }
+      }
+      
+      // Fallback: if no part found, try the whole hash
+      if (!tokenString && hash.includes('access_token=')) {
+        // Try to extract from hash directly
+        const accessTokenIndex = hash.indexOf('access_token=');
+        if (accessTokenIndex >= 0) {
+          // Get everything from access_token= onwards, but might need to handle # in the middle
+          tokenString = hash.substring(accessTokenIndex);
+          // Remove any # that might be before access_token
+          if (tokenString.startsWith('#')) {
+            tokenString = tokenString.substring(1);
+          }
+        }
+      }
+      
+      console.log('Parsing token string:', tokenString.substring(0, 100) + '...');
+      
+      // Extract tokens from the token string
+      const hashParams = new URLSearchParams(tokenString);
+      
+      // Debug: log all parameters found
+      console.log('All hash parameters:', Array.from(hashParams.keys()));
+      
       const accessToken = hashParams.get('access_token');
       const refreshToken = hashParams.get('refresh_token');
       
       console.log('Tokens found:', { 
         hasAccessToken: !!accessToken, 
         hasRefreshToken: !!refreshToken,
-        accessTokenLength: accessToken?.length || 0
+        accessTokenLength: accessToken?.length || 0,
+        refreshTokenLength: refreshToken?.length || 0,
+        accessTokenPreview: accessToken ? accessToken.substring(0, 20) + '...' : 'null',
+        refreshTokenPreview: refreshToken ? refreshToken.substring(0, 20) + '...' : 'null'
       });
       
       if (accessToken && refreshToken) {
