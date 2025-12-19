@@ -327,9 +327,9 @@ export class Router {
     }
   }
 
-  private async init(): Promise<void> {
+  private init(): void {
     // First, handle potential OAuth redirect responses (e.g., Google)
-    await this.handleOAuthCallback();
+    void this.handleOAuthCallback();
     this.registerAuthListener();
     this.registerGlobalLogout();
 
@@ -344,16 +344,8 @@ export class Router {
       this.handleRouteChange();
     });
 
-    // Check auth state BEFORE rendering to avoid showing sign-in page if already signed in
-    await this.refreshAuthState();
-    
-    // If user is signed in and trying to access sign-in/sign-up page, redirect immediately
-    if (this.currentUserId && (this.currentPage === 'signin' || this.currentPage === 'signup')) {
-      this.currentPage = 'main';
-      window.location.hash = 'main';
-    }
-
     this.render();
+    void this.refreshAuthState();
   }
 
   /**
@@ -374,13 +366,6 @@ export class Router {
       if (event === 'SIGNED_IN' && (this.currentPage === 'signin' || this.currentPage === 'signup')) {
         this.currentPage = 'main';
         window.location.hash = 'main';
-        this.render();
-      }
-      
-      // On sign-out, redirect to sign-in page if not already there
-      if (event === 'SIGNED_OUT' && this.currentPage !== 'signin' && this.currentPage !== 'signup') {
-        this.currentPage = 'signin';
-        window.location.hash = 'signin';
         this.render();
       }
     });
@@ -422,14 +407,6 @@ export class Router {
       document.body.classList.add('main-background');
       this.initHeroAnimation();
     } else if (this.currentPage === 'signin' || this.currentPage === 'signup') {
-      // If user is already signed in and tries to access sign-in/sign-up page, redirect to main
-      if (this.currentUserId) {
-        this.currentPage = 'main';
-        window.location.hash = 'main';
-        // Re-render with main page instead
-        this.render();
-        return;
-      }
       document.body.classList.add('auth-background');
     } else {
       // product, checkout, profile pages use demo-background
@@ -630,17 +607,6 @@ export class Router {
   }
 
   private getSignInPageContent(): string {
-    // If user is already signed in, show a message with sign out option
-    const isSignedIn = !!this.currentUserId;
-    const signOutSection = isSignedIn ? `
-      <div style="text-align: center; padding: 1rem 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 1.5rem;">
-        <p style="margin-bottom: 1rem; color: #666;">You're already signed in as <strong>${this.currentUserName || 'User'}</strong></p>
-        <button type="button" class="auth-logout-btn" style="background: transparent; border: 1px solid #ccc; color: #333; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">
-          Sign out
-        </button>
-      </div>
-    ` : '';
-    
     return `
       <div class="page auth-page">
         <section class="auth-hero-fixed">
@@ -655,8 +621,7 @@ export class Router {
             <p class="auth-subtitle">
               Pick up where you left off, and keep shaping the rooms you\u2019re dreaming of.
             </p>
-            ${signOutSection}
-            ${isSignedIn ? '' : `<form class="auth-form" novalidate>`}
+            <form class="auth-form" novalidate>
               <label class="auth-field">
                 <span>Email</span>
                 <input type="email" placeholder="you@example.com" />
@@ -1189,35 +1154,16 @@ export class Router {
 
   private async handleLogout(target?: HTMLButtonElement | null): Promise<void> {
     if (target) target.disabled = true;
-    console.log('🚪 Logging out...');
     try {
-      // Sign out from Supabase (this clears the session from localStorage)
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        console.error('Logout error from Supabase:', error);
-      } else {
-        console.log('✅ Successfully signed out from Supabase');
-      }
-      
-      // Clear local state
-      this.currentUserId = null;
-      this.currentUserName = null;
-      
-      // Clear any Supabase session keys from localStorage manually (just to be sure)
-      const supabaseKeys = Object.keys(localStorage).filter(key => key.startsWith('sb-') && key.includes('auth'));
-      supabaseKeys.forEach(key => {
-        console.log('🗑️ Removing localStorage key:', key);
-        localStorage.removeItem(key);
-      });
-      
-      console.log('✅ Logout complete, redirecting to sign-in page');
+      // Use global scope to ensure all sessions are cleared
+      // (Supabase v2 signOut accepts an options object)
+      await supabase.auth.signOut({ scope: 'global' } as any);
     } catch (error) {
-      console.error('❌ Logout error:', error);
-      // Even if there's an error, clear local state
+      // eslint-disable-next-line no-console
+      console.error('Logout error:', error);
+    } finally {
       this.currentUserId = null;
       this.currentUserName = null;
-    } finally {
-      // Always redirect to sign-in page
       this.currentPage = 'signin';
       window.location.hash = 'signin';
       this.render();
@@ -1916,34 +1862,25 @@ export class Router {
     // Initialize OpenAI client (lazy import to avoid breaking the app)
     const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
     let openai: any = null;
-    
-    // Log environment variable status for debugging
-    console.log('🔍 OpenAI initialization check:');
-    console.log('  - VITE_OPENAI_API_KEY exists:', !!apiKey);
-    console.log('  - Key length:', apiKey?.length || 0);
-    console.log('  - Key starts with:', apiKey?.substring(0, 7) || 'N/A');
-    console.log('  - All VITE_ env vars:', Object.keys(import.meta.env).filter(k => k.startsWith('VITE_')));
-    
     try {
-      if (apiKey && apiKey !== 'your_api_key_here' && apiKey.trim().length > 0) {
+      if (apiKey && apiKey !== 'your_api_key_here') {
         // Dynamic import to avoid breaking module loading
         const OpenAIModule = await import('openai');
         const OpenAI = OpenAIModule.default;
-        const trimmedKey = apiKey.trim();
-        openai = new OpenAI({ apiKey: trimmedKey, dangerouslyAllowBrowser: true });
-        console.log('✅ OpenAI client initialized successfully');
-      } else {
-        console.warn('⚠️ OpenAI API key not configured or invalid. Using fallback pattern matching.');
-        console.warn('To enable AI: Add VITE_OPENAI_API_KEY=sk-your-key to Netlify environment variables');
+        openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
       }
-    } catch (error: any) {
-      console.error('❌ Failed to initialize OpenAI client:', error);
-      console.error('Error details:', {
-        message: error?.message,
-        name: error?.name,
-        stack: error?.stack
-      });
+    } catch (error) {
+      console.error('Failed to initialize OpenAI client:', error);
       openai = null;
+    }
+    
+    // Log API key status (for debugging)
+    if (!apiKey || apiKey === 'your_api_key_here') {
+      console.log('⚠️ OpenAI API key not configured. Using fallback pattern matching.');
+      console.log('To enable AI: Add VITE_OPENAI_API_KEY=sk-your-key to .env file');
+    } else {
+      console.log('✅ OpenAI API key found. AI chat enabled.');
+      console.log('Key preview:', apiKey.substring(0, 7) + '...' + apiKey.substring(apiKey.length - 4));
     }
     
     // Store conversation history for context
@@ -2294,34 +2231,12 @@ Be friendly, helpful, enthusiastic, and conversational. Make your responses feel
             }
           ] : undefined;
 
-          console.log('🤖 Sending request to OpenAI...');
-          console.log('  - Model: gpt-4o-mini');
-          console.log('  - Messages count:', conversationHistory.length);
-          console.log('  - Tools available:', !!tools);
-          
-          let completion;
-          try {
-            completion = await openai.chat.completions.create({
-              model: 'gpt-4o-mini',
-              messages: conversationHistory as any,
-              ...(tools ? { tools, tool_choice: 'auto' } : {}),
-              temperature: 0.7,
-            });
-            
-            console.log('✅ OpenAI response received:', {
-              hasChoices: !!completion.choices,
-              choicesCount: completion.choices?.length || 0
-            });
-          } catch (apiError: any) {
-            console.error('❌ OpenAI API call failed:', apiError);
-            console.error('Error details:', {
-              message: apiError?.message,
-              status: apiError?.status,
-              code: apiError?.code,
-              type: apiError?.type
-            });
-            throw apiError; // Re-throw to be caught by outer try-catch
-          }
+          const completion = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: conversationHistory as any,
+            ...(tools ? { tools, tool_choice: 'auto' } : {}),
+            temperature: 0.7,
+          });
 
           const messageResponse = completion.choices[0]?.message;
           let responseText = '';
@@ -2532,14 +2447,10 @@ Be friendly, helpful, enthusiastic, and conversational. Make your responses feel
         }
         
         let errorMessage = "I'm sorry, I encountered an error. Please try again.";
-        if (error?.message?.includes('API key') || error?.status === 401) {
-          errorMessage = "API key error. Please check your OpenAI API key in Netlify environment variables.";
-        } else if (error?.message?.includes('rate limit') || error?.status === 429) {
+        if (error?.message?.includes('API key')) {
+          errorMessage = "API key error. Please check your OpenAI API key in the .env file.";
+        } else if (error?.message?.includes('rate limit')) {
           errorMessage = "Rate limit exceeded. Please wait a moment and try again.";
-        } else if (error?.message?.includes('network') || error?.message?.includes('fetch')) {
-          errorMessage = "Network error. Please check your internet connection and try again.";
-        } else if (error?.message) {
-          errorMessage = `Error: ${error.message}`;
         }
         
         const aiMessage = document.createElement('div');
