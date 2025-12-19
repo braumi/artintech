@@ -368,6 +368,13 @@ export class Router {
         window.location.hash = 'main';
         this.render();
       }
+      
+      // On sign-out, redirect to sign-in page if not already there
+      if (event === 'SIGNED_OUT' && this.currentPage !== 'signin' && this.currentPage !== 'signup') {
+        this.currentPage = 'signin';
+        window.location.hash = 'signin';
+        this.render();
+      }
     });
 
     if (listener && typeof listener.subscription?.unsubscribe === 'function') {
@@ -407,6 +414,14 @@ export class Router {
       document.body.classList.add('main-background');
       this.initHeroAnimation();
     } else if (this.currentPage === 'signin' || this.currentPage === 'signup') {
+      // If user is already signed in and tries to access sign-in/sign-up page, redirect to main
+      if (this.currentUserId) {
+        this.currentPage = 'main';
+        window.location.hash = 'main';
+        // Re-render with main page instead
+        this.render();
+        return;
+      }
       document.body.classList.add('auth-background');
     } else {
       // product, checkout, profile pages use demo-background
@@ -607,6 +622,17 @@ export class Router {
   }
 
   private getSignInPageContent(): string {
+    // If user is already signed in, show a message with sign out option
+    const isSignedIn = !!this.currentUserId;
+    const signOutSection = isSignedIn ? `
+      <div style="text-align: center; padding: 1rem 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 1.5rem;">
+        <p style="margin-bottom: 1rem; color: #666;">You're already signed in as <strong>${this.currentUserName || 'User'}</strong></p>
+        <button type="button" class="auth-logout-btn" style="background: transparent; border: 1px solid #ccc; color: #333; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">
+          Sign out
+        </button>
+      </div>
+    ` : '';
+    
     return `
       <div class="page auth-page">
         <section class="auth-hero-fixed">
@@ -621,6 +647,7 @@ export class Router {
             <p class="auth-subtitle">
               Pick up where you left off, and keep shaping the rooms you\u2019re dreaming of.
             </p>
+            ${signOutSection}
             <form class="auth-form" novalidate>
               <label class="auth-field">
                 <span>Email</span>
