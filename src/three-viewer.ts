@@ -1482,15 +1482,94 @@ export class ThreeApartmentViewer {
 
   setWallColor(color: string | number): void {
     const targetColor = new THREE.Color(color as any);
-    console.log('Setting wall color to:', color);
+    console.log('🔵 setWallColor called with:', color);
     
-    // Update tracked wall materials directly
-    this.wallMaterials.forEach(material => {
-      material.color.copy(targetColor);
-      material.needsUpdate = true;
+    // Collect all unique materials from house model first
+    const allMaterials = new Set<THREE.Material>();
+    
+    if (this.houseModelRoot) {
+      this.houseModelRoot.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh;
+          const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          materials.forEach(mat => allMaterials.add(mat));
+        }
+      });
+    }
+    
+    console.log('📦 Total materials found:', allMaterials.size);
+    
+    // Log ALL materials with details
+    const materialInfo: Array<{name: string, type: string, hasColor: boolean, color?: string, transparent?: boolean, opacity?: number}> = [];
+    allMaterials.forEach(mat => {
+      const m = mat as THREE.Material & { name?: string; color?: THREE.Color };
+      const info: any = {
+        name: m.name || '(unnamed)',
+        type: mat.constructor.name,
+        hasColor: !!(m.color && (m.color as any).isColor)
+      };
+      if (m.color && (m.color as any).isColor) {
+        info.color = '#' + (m.color as THREE.Color).getHexString();
+      }
+      if (mat instanceof THREE.MeshStandardMaterial) {
+        info.transparent = mat.transparent;
+        info.opacity = mat.opacity;
+      }
+      materialInfo.push(info);
+    });
+    console.table(materialInfo);
+    
+    // Update all materials that could be walls - be very permissive
+    let updatedCount = 0;
+    allMaterials.forEach(mat => {
+      if (!(mat instanceof THREE.MeshStandardMaterial) || !mat.color) {
+        if (mat instanceof THREE.MeshStandardMaterial) {
+          console.log('  ⏭️ Skipping (no color):', (mat as any).name || '(unnamed)');
+        }
+        return;
+      }
+      
+      const m = mat as THREE.MeshStandardMaterial & { name?: string };
+      const name = (m.name ?? '').toLowerCase();
+      const currentColor = m.color.getHex();
+      
+      // Skip doors
+      if (name.includes('door') || name.includes('dvere')) {
+        console.log('  ⏭️ Skipping door:', m.name);
+        return;
+      }
+      
+      // Skip windows
+      if (name.includes('glass') || name.includes('szklo')) {
+        console.log('  ⏭️ Skipping window:', m.name);
+        return;
+      }
+      
+      // Skip floors
+      if (
+        name === 'alder_fine_wood_pbr_texture_seamless' ||
+        name === 'laminate_floor' ||
+        name.includes('podloga') ||
+        name.includes('podłoga') ||
+        (m.map && (
+          (m.map as any).image?.src?.includes('wooden_floor') ||
+          (m.map as any).image?.src?.includes('tile_floor')
+        ))
+      ) {
+        console.log('  ⏭️ Skipping floor:', m.name);
+        return;
+      }
+      
+      // Update this material - it should be a wall
+      console.log('  ✅ Updating wall:', m.name || '(unnamed)', 'from', '#' + currentColor.toString(16).padStart(6, '0'), 'to', color);
+      m.color.copy(targetColor);
+      m.needsUpdate = true;
+      updatedCount++;
     });
     
-    // Update programmatic walls
+    console.log('✅ Updated', updatedCount, 'wall materials');
+    
+    // Also update programmatic walls
     this.walls.forEach(wall => {
       wall.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
@@ -1508,63 +1587,6 @@ export class ThreeApartmentViewer {
         }
       });
     });
-    
-    // Update house model walls - this is the main source for static models
-    if (this.houseModelRoot) {
-      let updatedCount = 0;
-      this.houseModelRoot.traverse((child) => {
-        if ((child as THREE.Mesh).isMesh) {
-          const mesh = child as THREE.Mesh;
-          const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-          materials.forEach(mat => {
-            if (!(mat instanceof THREE.MeshStandardMaterial) || !mat.color) return;
-            
-            const m = mat as THREE.MeshStandardMaterial & { name?: string };
-            const name = (m.name ?? '').toLowerCase();
-            
-            // Skip doors
-            if (name.includes('door') || name.includes('dvere')) return;
-            
-            // Skip windows
-            if (name.includes('glass') || name.includes('szklo')) return;
-            
-            // Skip floors
-            if (
-              name === 'alder_fine_wood_pbr_texture_seamless' ||
-              name === 'laminate_floor' ||
-              name.includes('podloga') ||
-              name.includes('podłoga') ||
-              (m.map && (
-                (m.map as any).image?.src?.includes('wooden_floor') ||
-                (m.map as any).image?.src?.includes('tile_floor')
-              ))
-            ) return;
-            
-            // Skip special materials that aren't walls
-            if (
-              name.includes('metal') ||
-              name.includes('chrome') ||
-              name.includes('stainless') ||
-              name.includes('marble') ||
-              name.includes('plastic') ||
-              name.includes('tkanina') || // fabric
-              name.includes('drewno') || // wood (furniture)
-              (name.includes('black') && !name.includes('matte'))
-            ) return;
-            
-            // Skip transparent materials
-            if (m.transparent || (m.opacity !== undefined && m.opacity < 0.9)) return;
-            
-            // This should be a wall - update it
-            console.log('Updating wall material:', m.name, 'Current color:', m.color.getHexString());
-            m.color.copy(targetColor);
-            m.needsUpdate = true;
-            updatedCount++;
-          });
-        }
-      });
-      console.log('Updated', updatedCount, 'wall materials in house model');
-    }
   }
 
   setFloorTexture(texturePath: string | null): void {
