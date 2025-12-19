@@ -1537,9 +1537,20 @@ export class ThreeApartmentViewer {
       const name = (m.name ?? '').toLowerCase();
       const currentColor = m.color.getHex();
       
-      // Skip doors (explicit check)
-      if (name.includes('door') || name.includes('dvere') || name === 'door_material') {
-        console.log('  ⏭️ Skipping door:', m.name);
+      // Skip doors (explicit check by name and color)
+      // Doors are typically brown (0x8b5a2b) or have door-related names
+      const isDoorByName = name.includes('door') || name.includes('dvere') || name === 'door_material';
+      // Check for brown door colors (0x8b5a2b is the programmatic door color)
+      // Also check for brown-ish colors that might be doors
+      const r = (currentColor >> 16) & 0xff;
+      const g = (currentColor >> 8) & 0xff;
+      const b = currentColor & 0xff;
+      // Brown doors typically have: medium red, medium-low green, low blue
+      const isDoorByColor = currentColor === 0x8b5a2b || // Exact brown door color
+                           (r >= 0x70 && r <= 0xa0 && g >= 0x40 && g <= 0x70 && b >= 0x20 && b <= 0x50); // Brown range
+      
+      if (isDoorByName || isDoorByColor) {
+        console.log('  ⏭️ Skipping door:', m.name, 'Color:', '#' + currentColor.toString(16).padStart(6, '0'));
         return;
       }
       
