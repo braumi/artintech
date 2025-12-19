@@ -203,6 +203,7 @@ export class ThreeApartmentViewer {
   private floorTextureCache: Map<FloorMaterialKey, THREE.Texture> = new Map();
   private houseModelRoot: THREE.Object3D | null = null;
   private originalFloorMaterials: Map<THREE.Mesh, THREE.MeshStandardMaterial> = new Map();
+  private wallMaterials: Set<THREE.MeshStandardMaterial> = new Set();
 
   mount(container: HTMLElement): void {
     this.dispose();
@@ -319,6 +320,7 @@ export class ThreeApartmentViewer {
     this.floors = [];
     this.walls = [];
     this.wallBounds = [];
+    this.wallMaterials.clear();
     this.originalFloorMaterials.clear();
     this.houseModelRoot = null;
     this.clearFurniture();
@@ -399,6 +401,7 @@ export class ThreeApartmentViewer {
         wallContainer.rotation.y = -angle;
 
         const wallMat = new THREE.MeshStandardMaterial({ color: 0xb5b5b5, metalness: 0.0, roughness: 0.9 });
+        this.wallMaterials.add(wallMat); // Track wall materials
         const halfLen = length / 2;
 
         // Helper to create a wall slice in local wall coordinates
@@ -714,6 +717,7 @@ export class ThreeApartmentViewer {
     this.floors = [];
     this.walls = [];
     this.wallBounds = [];
+    this.wallMaterials.clear();
     this.originalFloorMaterials.clear();
     this.houseModelRoot = null;
     this.furnitureItems.clear();
@@ -1412,22 +1416,10 @@ export class ThreeApartmentViewer {
 
   setWallColor(color: string | number): void {
     const colorValue = typeof color === 'string' ? parseInt(color.replace('#', ''), 16) : color;
-    this.walls.forEach(wall => {
-      wall.traverse((child) => {
-        if ((child as THREE.Mesh).isMesh) {
-          const mesh = child as THREE.Mesh;
-          // Skip doors and windows - only change wall materials
-          if (mesh.material instanceof THREE.MeshStandardMaterial) {
-            // Check if it's a wall material (not door or window)
-            const isWall = mesh.material.color.getHex() !== 0x8b5a2b && // not door brown
-                          !(mesh.material instanceof THREE.MeshPhysicalMaterial); // not window glass
-            if (isWall) {
-              mesh.material.color.setHex(colorValue);
-              mesh.material.needsUpdate = true;
-            }
-          }
-        }
-      });
+    // Update all tracked wall materials directly
+    this.wallMaterials.forEach(material => {
+      material.color.setHex(colorValue);
+      material.needsUpdate = true;
     });
   }
 

@@ -2606,7 +2606,7 @@ body.auth-background {
 }
 .viewer-controls-right .selection-color-palette {
   left: auto;
-  right: 0;
+  right: calc(100% + 0.5rem);
   transform: none;
 }
 .selection-color-palette[hidden] {
