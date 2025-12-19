@@ -248,37 +248,83 @@ export class Router {
    * signed out and prompt again.
    */
   private async handleOAuthCallback(): Promise<void> {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
-    const oauthError = params.get('error_description');
+    // Check for OAuth callback in query string (code parameter)
+    const queryParams = new URLSearchParams(window.location.search);
+    const code = queryParams.get('code');
+    const oauthError = queryParams.get('error_description');
 
     if (oauthError) {
       console.warn('OAuth error from provider:', oauthError);
       return;
     }
 
-    if (!code) return;
-
-    console.log('OAuth callback detected, exchanging code for session...');
-    try {
-      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-      if (error) {
-        console.error('Failed to exchange OAuth code for session:', error);
+    if (code) {
+      // Handle code-based OAuth flow
+      console.log('OAuth callback detected, exchanging code for session...');
+      try {
+        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) {
+          console.error('Failed to exchange OAuth code for session:', error);
+          return;
+        }
+        console.log('OAuth session exchange successful:', data);
+      } catch (err) {
+        console.error('Exception during OAuth code exchange:', err);
         return;
       }
-      console.log('OAuth session exchange successful:', data);
-    } catch (err) {
-      console.error('Exception during OAuth code exchange:', err);
+
+      // Clean the URL (remove ?code=...) but keep the current hash route
+      const hash = window.location.hash || '#main';
+      const cleanUrl = `${window.location.origin}${window.location.pathname}${hash}`;
+      window.history.replaceState({}, '', cleanUrl);
+
+      // Update auth state after exchanging the session
+      await this.refreshAuthState();
       return;
     }
 
-    // Clean the URL (remove ?code=...) but keep the current hash route
-    const hash = window.location.hash || '#main';
-    const cleanUrl = `${window.location.origin}${window.location.pathname}${hash}`;
-    window.history.replaceState({}, '', cleanUrl);
-
-    // Update auth state after exchanging the session
-    await this.refreshAuthState();
+    // Check for OAuth tokens in hash (Supabase's detectSessionInUrl should handle this automatically)
+    // But we need to clean up the URL after Supabase processes it
+    const hash = window.location.hash;
+    if (hash && hash.includes('access_token=')) {
+      console.log('OAuth tokens detected in hash, processing...');
+      
+      // Extract tokens from hash and set session explicitly to ensure correct account
+      const hashParams = new URLSearchParams(hash.substring(1)); // Remove #
+      const accessToken = hashParams.get('access_token');
+      const refreshToken = hashParams.get('refresh_token');
+      
+      if (accessToken && refreshToken) {
+        try {
+          // Set the session explicitly to ensure we get the correct user
+          const { data, error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken
+          });
+          
+          if (error) {
+            console.error('Failed to set OAuth session:', error);
+            return;
+          }
+          
+          console.log('OAuth session set successfully, user:', data.user?.email);
+          
+          // Clean the URL immediately - remove all OAuth parameters from hash
+          // Navigate to main page after successful OAuth
+          this.currentPage = 'main';
+          const cleanUrl = `${window.location.origin}${window.location.pathname}#main`;
+          window.history.replaceState({}, '', cleanUrl);
+          
+          // Update auth state
+          await this.refreshAuthState();
+          
+          // Render the page
+          this.render();
+        } catch (err) {
+          console.error('Exception during OAuth session setup:', err);
+        }
+      }
+    }
   }
 
   private init(): void {
@@ -1401,12 +1447,12 @@ export class Router {
         if (errorEl) {
           errorEl.textContent = '';
         }
+        
         const { error } = await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: {
-            // Use origin+pathname so Supabase can append ?code=... and we still
-            // land back on this SPA (hash routing continues to work afterward).
-            redirectTo: `${window.location.origin}${window.location.pathname}`
+            // Redirect to the current page, Supabase will append tokens to hash
+            redirectTo: `${window.location.origin}${window.location.pathname}${window.location.hash || '#signin'}`
           }
         });
         if (error) {
@@ -1840,8 +1886,12 @@ export class Router {
     // Store conversation history for context
     const conversationHistory: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
     
-    // Initialize system prompt
-    const systemPrompt = `You are a helpful AI assistant for an interior design and floor plan application. Your role is to help users design their spaces by placing furniture and answering questions about their floor plans.
+    // Initialize system prompt with current plan status
+    const getSystemPrompt = () => {
+      const planStatus = this.currentPlanId 
+        ? 'A floor plan is currently loaded and ready for furniture placement.' 
+        : 'No floor plan is currently loaded. The user must select a floor plan first before placing furniture.';
+      return `You are a helpful AI assistant for an interior design and floor plan application. Your role is to help users design their spaces by placing furniture and answering questions about their floor plans.
 
 Available furniture types:
 - bed (Queen Bed)
@@ -1853,7 +1903,7 @@ Available furniture types:
 
 Available colors: gray, white, black, light gray, dark gray, warm wood
 
-IMPORTANT: You can only place furniture if a floor plan is currently loaded. If the user asks to place furniture but no plan is loaded, politely let them know they need to select a floor plan first.
+CURRENT STATUS: ${planStatus}
 
 When a user asks to place furniture (and a plan is loaded):
 1. Understand what furniture they want (type, quantity, color if specified)
@@ -1868,9 +1918,10 @@ You can also:
 - Answer questions about furniture, colors, and layout
 
 Be friendly, helpful, enthusiastic, and conversational. Make your responses feel natural and engaging, not robotic.`;
+    };
 
     if (openai) {
-      conversationHistory.push({ role: 'system', content: systemPrompt });
+      conversationHistory.push({ role: 'system', content: getSystemPrompt() });
     }
 
     const getCurrentTime = () => {
@@ -2104,6 +2155,40 @@ Be friendly, helpful, enthusiastic, and conversational. Make your responses feel
       // Try AI first, fallback to pattern matching
       try {
         if (openai) {
+          // Update system message to reflect current plan status
+          if (conversationHistory.length > 0 && conversationHistory[0].role === 'system') {
+            const planStatus = this.currentPlanId 
+              ? 'A floor plan is currently loaded and ready for furniture placement.' 
+              : 'No floor plan is currently loaded. The user must select a floor plan first before placing furniture.';
+            conversationHistory[0].content = `You are a helpful AI assistant for an interior design and floor plan application. Your role is to help users design their spaces by placing furniture and answering questions about their floor plans.
+
+Available furniture types:
+- bed (Queen Bed)
+- chair (Accent Chair)
+- sofa (Modular Sofa)
+- dining (Dining Table)
+- coffee-table (Coffee Table)
+- plant (Fiddle Leaf Plant)
+
+Available colors: gray, white, black, light gray, dark gray, warm wood
+
+CURRENT STATUS: ${planStatus}
+
+When a user asks to place furniture (and a plan is loaded):
+1. Understand what furniture they want (type, quantity, color if specified)
+2. Use the placeFurniture function to place it
+3. Respond with friendly, encouraging messages about how it will look in their space
+
+You can also:
+- Answer questions about interior design
+- Provide design suggestions and tips
+- Help users understand their space better
+- Have natural, engaging conversations about interior design
+- Answer questions about furniture, colors, and layout
+
+Be friendly, helpful, enthusiastic, and conversational. Make your responses feel natural and engaging, not robotic.`;
+          }
+          
           // Use OpenAI - always use AI if available, but only allow furniture placement if plan is selected
           const tools = this.currentPlanId ? [
             {
