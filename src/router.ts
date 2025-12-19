@@ -1057,11 +1057,11 @@ export class Router {
                       <span class="selection-color-dot" id="wall-color-dot"></span>
                     </button>
                     <div class="selection-color-palette" id="wall-color-palette" hidden>
-                      <button class="selection-color-swatch" data-color="#b5b5b5" aria-label="Light gray"></button>
                       <button class="selection-color-swatch" data-color="#ffffff" aria-label="White"></button>
-                      <button class="selection-color-swatch" data-color="#f0f0f0" aria-label="Off white"></button>
-                      <button class="selection-color-swatch" data-color="#e0e0e0" aria-label="Light gray 2"></button>
-                      <button class="selection-color-swatch" data-color="#d0d0d0" aria-label="Gray"></button>
+                      <button class="selection-color-swatch" data-color="#f5f5dc" aria-label="Beige"></button>
+                      <button class="selection-color-swatch" data-color="#d0d0d0" aria-label="Light grey"></button>
+                      <button class="selection-color-swatch" data-color="#b5b5b5" aria-label="Grey"></button>
+                      <button class="selection-color-swatch" data-color="#666666" aria-label="Dark grey"></button>
                     </div>
                   </div>
                   <button class="selection-btn" id="floor-texture-btn" aria-label="Change floor texture">

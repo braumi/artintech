@@ -2623,8 +2623,9 @@ body.auth-background {
   padding: 0;
   background-clip: padding-box;
 }
+/* Furniture color swatches */
 .selection-color-swatch[aria-label="White"] {
-  background: #f5f5f5;
+  background: #ffffff;
 }
 .selection-color-swatch[aria-label="Light grey"] {
   background: #d0d0d0;
@@ -2639,17 +2640,20 @@ body.auth-background {
   background: #c28b5c;
 }
 /* Wall color swatches */
-.selection-color-swatch[aria-label="Light gray"] {
+.selection-color-swatch[aria-label="White"] {
+  background: #ffffff;
+}
+.selection-color-swatch[aria-label="Beige"] {
+  background: #f5f5dc;
+}
+.selection-color-swatch[aria-label="Light grey"] {
+  background: #d0d0d0;
+}
+.selection-color-swatch[aria-label="Grey"] {
   background: #b5b5b5;
 }
-.selection-color-swatch[aria-label="Off white"] {
-  background: #f0f0f0;
-}
-.selection-color-swatch[aria-label="Light gray 2"] {
-  background: #e0e0e0;
-}
-.selection-color-swatch[aria-label="Gray"] {
-  background: #d0d0d0;
+.selection-color-swatch[aria-label="Dark grey"] {
+  background: #666666;
 }
 .selection-color-swatch-default {
   background: linear-gradient(135deg, #c28b5c 0%, #f5f5f5 50%, #888888 100%);
