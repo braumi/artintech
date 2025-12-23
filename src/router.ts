@@ -899,7 +899,7 @@ export class Router {
                   <button class="profile-plan-btn">Upgrade to Premium</button>
                 </div>
 
-                <div class="profile-plan-card">
+                <div class="profile-plan-card profile-plan-card-plus">
                   <div class="profile-plan-badge profile-plan-badge-plus">Best Value</div>
                   <h3 class="profile-plan-name">Premium Plus</h3>
                   <div class="profile-plan-price">
@@ -1623,7 +1623,7 @@ export class Router {
     const contactBackdrop = contactModal.querySelector<HTMLElement>('.contact-modal__backdrop');
     const contactClose = contactModal.querySelector<HTMLButtonElement>('.contact-modal__close');
     const premiumBtn = this.appElement.querySelector<HTMLButtonElement>('.profile-plan-card-premium .profile-plan-btn');
-    const plusBtn = Array.from(this.appElement.querySelectorAll<HTMLButtonElement>('.profile-plan-card .profile-plan-btn'))[2] ?? null;
+    const plusBtn = this.appElement.querySelector<HTMLButtonElement>('.profile-plan-card-plus .profile-plan-btn');
 
     const setContactOpen = (open: boolean) => {
       contactModal.classList.toggle('open', open);
@@ -1634,14 +1634,11 @@ export class Router {
     const openContact = () => setContactOpen(true);
     const closeContact = () => setContactOpen(false);
 
-    premiumBtn?.addEventListener('click', (event) => {
-      event.preventDefault();
-      openContact();
-    });
-
-    plusBtn?.addEventListener('click', (event) => {
-      event.preventDefault();
-      openContact();
+    [premiumBtn, plusBtn].forEach(button => {
+      button?.addEventListener('click', (event) => {
+        event.preventDefault();
+        openContact();
+      });
     });
 
     contactBackdrop?.addEventListener('click', () => closeContact());
