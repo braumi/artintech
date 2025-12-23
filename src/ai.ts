@@ -11,6 +11,25 @@ export type Plan = {
   rooms: PlanRoom[];
 };
 
+export async function getCleanedBlueprintImage(file: File): Promise<string> {
+  const base64 = await fileToDataUrl(file);
+  const endpoint = getNetlifyFunctionUrl('blueprint-clean');
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify({ imageBase64: base64 })
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    // eslint-disable-next-line no-console
+    console.warn('Blueprint clean failed, using original image:', res.status, text);
+    return base64;
+  }
+  const json = await res.json();
+  return (json.cleanedImageBase64 as string) || base64;
+}
+
 export async function sendBlueprintForPlan(file: File): Promise<Plan> {
   const base64 = await fileToDataUrl(file);
   const endpoint = getNetlifyFunctionUrl('blueprint-to-plan');

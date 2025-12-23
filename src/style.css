@@ -5329,6 +5329,42 @@ body.demo-background::before {
   cursor: grabbing;
 }
 
+.blueprint-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: flex-start;
+}
+
+.blueprint-upload--modal {
+  align-items: flex-start;
+}
+
+.blueprint-upload__link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2d7a4d;
+  font-weight: 700;
+  font-size: 1rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.blueprint-upload__link:hover {
+  color: #1f5636;
+  text-decoration-thickness: 2px;
+}
+
+.blueprint-upload__hint {
+  color: var(--secondary-black);
+  background: rgba(0, 0, 0, 0.05);
+  padding: 0.35rem 0.65rem;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  line-height: 1.2;
+}
+
 /* Embedded external editors */
 .b3d-frame-wrap {
   width: 100%;

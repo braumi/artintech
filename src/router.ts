@@ -6,10 +6,11 @@ import type {
 } from './three-viewer';
 import { supabase } from './supabaseClient';
 import * as THREE from 'three';
+import { getCleanedBlueprintImage, sendBlueprintForPlan } from './ai';
 // Lazy import OpenAI to avoid breaking the module if it fails
 type OpenAI = any;
 
-export type PageName = 'main' | 'product' | 'signin' | 'signup' | 'checkout' | 'profile';
+export type PageName = 'main' | 'product' | 'pricing' | 'signin' | 'signup' | 'checkout' | 'profile';
 
 type DemoPlanStats = {
   area: number;
@@ -325,7 +326,7 @@ export class Router {
 
     // Handle initial page load
     const hash = window.location.hash.slice(1) as PageName;
-    if (hash === 'product' || hash === 'signin' || hash === 'signup' || hash === 'checkout' || hash === 'profile') {
+    if (hash === 'product' || hash === 'pricing' || hash === 'signin' || hash === 'signup' || hash === 'checkout' || hash === 'profile') {
       this.currentPage = hash;
     }
 
@@ -422,7 +423,7 @@ export class Router {
       }
       document.body.classList.add('auth-background');
     } else {
-      // product, checkout, profile pages use demo-background
+      // product, pricing, checkout, profile pages use demo-background
       document.body.classList.add('demo-background');
     }
   }
@@ -542,6 +543,10 @@ export class Router {
           <button class="nav-btn ${this.currentPage === 'product' ? 'active' : ''}" data-page="product">
             Product
           </button>
+          <button class="nav-btn ${this.currentPage === 'pricing' ? 'active' : ''}" data-page="pricing">
+            Pricing
+          </button>
+          <button class="nav-btn" data-contact="true">Contact Us</button>
         </div>
         <button class="nav-signin" data-page="${authTargetPage}">${authLabel}</button>
         <button class="nav-burger" aria-label="Open menu">
@@ -552,12 +557,45 @@ export class Router {
         <div class="nav-drawer" aria-hidden="true">
           <button class="nav-drawer__item" data-page="main">Main</button>
           <button class="nav-drawer__item" data-page="product">Product</button>
+          <button class="nav-drawer__item" data-page="pricing">Pricing</button>
+          <button class="nav-drawer__item" data-contact="true">Contact Us</button>
           <button class="nav-drawer__item" data-page="${authTargetPage}">${authLabel}</button>
         </div>
       </nav>
     `;
 
     const mouseFollower = `<div class="mouse-follower"></div>`;
+
+    const contactModal = `
+      <!-- Global Contact modal -->
+      <div class="contact-modal" id="global-contact-modal" aria-hidden="true">
+        <div class="contact-modal__backdrop"></div>
+        <div class="contact-modal__dialog" role="dialog" aria-modal="true">
+          <button class="contact-modal__close" type="button" aria-label="Close contact form">&times;</button>
+          <header class="contact-modal__header">
+            <h2>Contact Us</h2>
+            <p>Have a question or need help? Leave your details and we'll get back to you soon.</p>
+          </header>
+          <form class="contact-modal__form">
+            <label class="contact-modal__field">
+              <span>Name</span>
+              <input type="text" placeholder="Your name" />
+            </label>
+            <label class="contact-modal__field">
+              <span>Email</span>
+              <input type="email" placeholder="you@example.com" />
+            </label>
+            <label class="contact-modal__field">
+              <span>Message</span>
+              <textarea placeholder="Tell us how we can help you"></textarea>
+            </label>
+            <button type="submit" class="auth-primary-btn contact-modal__submit">
+              Send Message
+            </button>
+          </form>
+        </div>
+      </div>
+    `;
 
     let pageContent: string;
     switch (this.currentPage) {
@@ -566,6 +604,9 @@ export class Router {
         break;
       case 'product':
         pageContent = this.getProductPageContent();
+        break;
+      case 'pricing':
+        pageContent = this.getPricingPageContent();
         break;
       case 'signin':
         pageContent = this.getSignInPageContent();
@@ -583,7 +624,7 @@ export class Router {
         pageContent = this.getMainPageContent();
     }
 
-    return navigation + pageContent + mouseFollower;
+    return navigation + pageContent + mouseFollower + contactModal;
   }
 
   private getMainPageContent(): string {
@@ -844,7 +885,7 @@ export class Router {
         <main class="profile-shell">
           <div class="profile-container">
             <header class="profile-header">
-              <div class="profile-welcome">
+              <div class="profile-welcome" style="text-align: center;">
                 <h1 class="profile-title">Welcome back, ${name}</h1>
                 <p class="profile-subtitle">Manage your account and subscription</p>
               </div>
@@ -861,6 +902,29 @@ export class Router {
                   </svg>
                   Log out
                 </button>
+              </div>
+            </header>
+          </div>
+        </main>
+      </div>
+    `;
+  }
+
+  private getPricingPageContent(): string {
+    return `
+      <div class="page auth-page pricing-page">
+        <section class="demo-hero-fixed">
+          <img
+            src="./components/hero components/demo_background.png"
+            alt="Forest and mountains background"
+          />
+        </section>
+        <main class="profile-shell">
+          <div class="profile-container" style="display: flex; flex-direction: column; justify-content: center;">
+            <header class="profile-header" style="justify-content: center;">
+              <div class="profile-welcome">
+                <h1 class="profile-title">Choose Your Plan</h1>
+                <p class="profile-subtitle">Upgrade to Premium to upload blueprints and generate AI house models</p>
               </div>
             </header>
 
@@ -886,7 +950,7 @@ export class Router {
                   <div class="profile-plan-badge profile-plan-badge-premium">Popular</div>
                   <h3 class="profile-plan-name">Premium</h3>
                   <div class="profile-plan-price">
-                    ₾1000
+                    ₾495
                     <span class="profile-plan-uses">5 uses</span>
                   </div>
                   <p class="profile-plan-description">Upload blueprints and generate AI models</p>
@@ -903,7 +967,7 @@ export class Router {
                   <div class="profile-plan-badge profile-plan-badge-plus">Best Value</div>
                   <h3 class="profile-plan-name">Premium Plus</h3>
                   <div class="profile-plan-price">
-                    ₾2000
+                    ₾995
                     <span class="profile-plan-uses">12 uses</span>
                   </div>
                   <p class="profile-plan-description">Maximum AI generations for power users</p>
@@ -1138,13 +1202,13 @@ export class Router {
               ${planCards}
             </div>
             <div class="plan-modal__footer">
-              <p class="plan-modal__upgrade-note">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
-                  <polyline points="13 2 13 9 20 9"/>
-                </svg>
-                To upload your blueprint, <button class="plan-modal__upgrade-link" data-page="profile">upgrade to Premium</button>
-              </p>
+              <div class="blueprint-upload blueprint-upload--modal" id="blueprint-upload">
+                <input type="file" id="blueprint-file" accept="image/*" hidden />
+                  <button type="button" class="blueprint-upload__link" id="blueprint-upload-btn" aria-label="Upload blueprint">
+                    Upload your blueprint
+                  </button>
+                <div class="blueprint-upload__hint" id="blueprint-upload-status">PNG/JPG with black line walls</div>
+              </div>
             </div>
           </div>
         </div>
@@ -1190,6 +1254,9 @@ export class Router {
     // Global logout buttons (e.g., in profile header)
     this.bindLogoutButtons();
 
+    // Global contact modal
+    this.attachContactModalListeners();
+
     // Page-specific wiring
     if (this.currentPage === 'product') {
       this.attachProductEventListeners().catch(err => {
@@ -1199,7 +1266,7 @@ export class Router {
       this.attachSignInListeners();
     } else if (this.currentPage === 'signup') {
       this.attachSignUpListeners();
-    } else if (this.currentPage === 'profile') {
+    } else if (this.currentPage === 'pricing') {
       this.attachProfileListeners();
     } else if (this.currentPage === 'checkout') {
       this.renderCheckoutDetails();
@@ -1645,6 +1712,53 @@ export class Router {
     contactClose?.addEventListener('click', () => closeContact());
   }
 
+  private attachContactModalListeners(): void {
+    const contactModal = this.appElement.querySelector<HTMLElement>('#global-contact-modal');
+    if (!contactModal) return;
+
+    const contactBackdrop = contactModal.querySelector<HTMLElement>('.contact-modal__backdrop');
+    const contactClose = contactModal.querySelector<HTMLButtonElement>('.contact-modal__close');
+    const contactButtons = this.appElement.querySelectorAll<HTMLElement>('[data-contact="true"]');
+
+    const setContactOpen = (open: boolean) => {
+      contactModal.classList.toggle('open', open);
+      contactModal.setAttribute('aria-hidden', open ? 'false' : 'true');
+      document.body.style.overflow = open ? 'hidden' : '';
+    };
+
+    const openContact = () => setContactOpen(true);
+    const closeContact = () => setContactOpen(false);
+
+    contactButtons.forEach(button => {
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        openContact();
+        // Close mobile drawer if open
+        const drawer = this.appElement.querySelector<HTMLElement>('.nav-drawer');
+        const burger = this.appElement.querySelector<HTMLElement>('.nav-burger');
+        if (drawer && burger) {
+          drawer.classList.remove('open');
+          burger.classList.remove('open');
+          drawer.setAttribute('aria-hidden', 'true');
+        }
+      });
+    });
+
+    contactBackdrop?.addEventListener('click', () => closeContact());
+    contactClose?.addEventListener('click', () => closeContact());
+
+    // Handle form submission
+    const form = contactModal.querySelector<HTMLFormElement>('.contact-modal__form');
+    form?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      // TODO: Implement form submission logic (e.g., send to backend API)
+      // eslint-disable-next-line no-alert
+      alert('Thank you for your message! We\'ll get back to you soon.');
+      closeContact();
+      form.reset();
+    });
+  }
+
   private async attachProductEventListeners(): Promise<void> {
     const viewerSection = this.appElement.querySelector('#viewer-section') as HTMLElement | null;
     const container = this.appElement.querySelector('#model-display') as HTMLElement | null;
@@ -1677,6 +1791,9 @@ export class Router {
     const selectionColorPalette = this.appElement.querySelector('#selection-color-palette') as HTMLElement | null;
     const selectionColorDot = this.appElement.querySelector('#selection-color-dot') as HTMLElement | null;
     const planGate = this.appElement.querySelector('#plan-gate') as HTMLElement | null;
+    const blueprintInputs = Array.from(this.appElement.querySelectorAll<HTMLInputElement>('#blueprint-file'));
+    const blueprintButtons = Array.from(this.appElement.querySelectorAll<HTMLButtonElement>('#blueprint-upload-btn'));
+    const blueprintStatuses = Array.from(this.appElement.querySelectorAll<HTMLElement>('#blueprint-upload-status'));
 
     // If not signed in, show gate and disable plan selection
     if (!this.currentUserId) {
@@ -1686,6 +1803,25 @@ export class Router {
       planButtons.forEach(btn => btn.removeAttribute('disabled'));
       if (planGate) planGate.style.display = 'none';
     }
+
+    const setBlueprintStatus = (text: string) => {
+      blueprintStatuses.forEach(status => {
+        status.textContent = text;
+      });
+    };
+
+    const resetBlueprintStatus = () => {
+      setBlueprintStatus('PNG/JPG with black line walls');
+    };
+
+    const setBlueprintSummary = (fileName: string) => {
+      const nameEl = this.appElement.querySelector('#active-plan-name') as HTMLElement | null;
+      const metaEl = this.appElement.querySelector('#active-plan-meta') as HTMLElement | null;
+      const descEl = this.appElement.querySelector('#active-plan-description') as HTMLElement | null;
+      if (nameEl) nameEl.textContent = 'Blueprint upload';
+      if (metaEl) metaEl.textContent = fileName ? `Tracing ${fileName}` : 'Tracing uploaded blueprint';
+      if (descEl) descEl.textContent = 'Walls are traced from black lines; add furniture on top.';
+    };
 
     viewer.setFurnitureCallbacks({
       onUpdate: ({ items, selectedId, interaction }) => {
@@ -1763,6 +1899,46 @@ export class Router {
       this.updateFurnitureStatus(option);
     };
 
+    const handleBlueprintUpload = async (file: File) => {
+      if (!file) return;
+      try {
+        setBlueprintStatus('Processing blueprint...');
+
+        // 1) Wait for the Python cleaner (via blueprint-clean) so we trace the
+        // walls-only image in 3D, even if that takes a couple of seconds.
+        const cleanedDataUrl = await getCleanedBlueprintImage(file);
+        await viewer.loadBlueprintFromImage(cleanedDataUrl);
+
+        // 2) In parallel, send the original file to blueprint-to-plan for AI JSON
+        void (async () => {
+          try {
+            // eslint-disable-next-line no-console
+            console.log('[Blueprint] sending image to blueprint-to-plan function');
+            const plan = await sendBlueprintForPlan(file);
+            // eslint-disable-next-line no-console
+            console.log('[Blueprint] received plan from blueprint-to-plan', plan);
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.error('[Blueprint] blueprint-to-plan failed', e);
+          }
+        })();
+
+        this.currentPlanId = 'blueprint-upload';
+        this.currentPlan = null;
+        setBlueprintSummary(file.name);
+        applyFurnitureSelection(null);
+        syncPlanSelection();
+        setModalState(false);
+        setBlueprintStatus('Blueprint traced. Add furniture or paint walls.');
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(err);
+        setBlueprintStatus('Failed to process blueprint. Try another image.');
+        // eslint-disable-next-line no-alert
+        alert('Could not process that blueprint image. Please try a clearer file.');
+      }
+    };
+
     const loadPlan = async (plan: DemoPlanConfig) => {
       if (this.currentPlanId === plan.id) {
         attemptCloseModal();
@@ -1779,12 +1955,54 @@ export class Router {
       applyFurnitureSelection(null);
       syncPlanSelection();
       setModalState(false);
+      resetBlueprintStatus();
     };
 
     viewer.clearFurniture();
     applyFurnitureSelection(null);
     this.updateActivePlanSummary(null);
     setModalState(true);
+
+    const openBlueprintPicker = (input: HTMLInputElement) => {
+      if (planGate) {
+        planGate.style.display = 'none';
+      }
+      setModalState(true);
+      // Reset so selecting the same file twice still fires change
+      input.value = '';
+      // Prefer showPicker when available (modern browsers), fall back to click
+      window.requestAnimationFrame(() => {
+        const anyInput = input as HTMLInputElement & { showPicker?: () => void };
+        if (typeof anyInput.showPicker === 'function') {
+          try {
+            anyInput.showPicker();
+            return;
+          } catch {
+            // ignore and fall back to click
+          }
+        }
+        input.click();
+      });
+    };
+
+    blueprintButtons.forEach(button => {
+      const targetInput = button.closest('.blueprint-upload')?.querySelector<HTMLInputElement>('#blueprint-file') ?? blueprintInputs[0];
+      if (!targetInput) return;
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        openBlueprintPicker(targetInput);
+      });
+    });
+
+    blueprintInputs.forEach(input => {
+      input.addEventListener('change', (event) => {
+        const file = (event.target as HTMLInputElement).files?.[0];
+        if (file) {
+          void handleBlueprintUpload(file);
+        }
+        (event.target as HTMLInputElement).value = '';
+      });
+    });
 
     planButtons.forEach(button => {
       button.addEventListener('click', () => {

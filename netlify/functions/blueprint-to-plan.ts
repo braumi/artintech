@@ -5,7 +5,12 @@
   - Returns structured JSON describing rooms and walls suitable for 3D rendering
 */
 
-import OpenAI from 'openai';
+import OpenAI from "openai";
+import fs from "fs";
+import path from "path";
+import { tmpdir } from "os";
+import { execFile } from "child_process";
+import { promisify } from "util";
 
 type PlanRoom = {
   name: string;
@@ -14,7 +19,7 @@ type PlanRoom = {
 };
 
 type Plan = {
-  units: 'meters';
+  units: "meters";
   ceilingHeightMeters: number;
   defaultWallThicknessMeters: number;
   rooms: PlanRoom[];
@@ -39,74 +44,248 @@ Rules:
 `;
 
 export async function handler(event: any) {
-  if (event.httpMethod === 'OPTIONS') {
+  if (event.httpMethod === "OPTIONS") {
     return {
       statusCode: 204,
       headers: corsHeaders(),
-      body: ''
+      body: "",
     };
   }
 
-  if (event.httpMethod !== 'POST') {
+  if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
       headers: corsHeaders(),
-      body: JSON.stringify({ error: 'Method Not Allowed' })
+      body: JSON.stringify({ error: "Method Not Allowed" }),
     };
   }
 
   try {
-    const contentType = event.headers['content-type'] || event.headers['Content-Type'] || '';
-    if (!contentType.includes('application/json')) {
+    // Debug: trace incoming request meta
+    // eslint-disable-next-line no-console
+    console.log("[blueprint-to-plan] handler invoked", {
+      method: event.httpMethod,
+      path: event.path,
+    });
+    const contentType =
+      event.headers["content-type"] || event.headers["Content-Type"] || "";
+    if (!contentType.includes("application/json")) {
       return {
         statusCode: 400,
         headers: corsHeaders(),
-        body: JSON.stringify({ error: 'Content-Type must be application/json' })
+        body: JSON.stringify({
+          error: "Content-Type must be application/json",
+        }),
       };
     }
 
-    const body = JSON.parse(event.body || '{}');
+    const body = JSON.parse(event.body || "{}");
     const imageBase64: string | undefined = body.imageBase64;
-    if (!imageBase64 || !/^data:image\/(png|jpeg|jpg);base64,/.test(imageBase64)) {
+    if (
+      !imageBase64 ||
+      !/^data:image\/(png|jpeg|jpg);base64,/.test(imageBase64)
+    ) {
       return {
         statusCode: 400,
         headers: corsHeaders(),
-        body: JSON.stringify({ error: 'imageBase64 data URL (png/jpeg) is required' })
+        body: JSON.stringify({
+          error: "imageBase64 data URL (png/jpeg) is required",
+        }),
       };
     }
 
-    const apiKey = process.env.OPENAI_API_KEY;
+    // Prefer a server-only key, but fall back to VITE_OPENAI_API_KEY in local/dev
+    const apiKey =
+      process.env.OPENAI_API_KEY || process.env.VITE_OPENAI_API_KEY;
     if (!apiKey) {
       return {
         statusCode: 500,
         headers: corsHeaders(),
-        body: JSON.stringify({ error: 'Server misconfigured: OPENAI_API_KEY is missing' })
+        body: JSON.stringify({
+          error:
+            "Server misconfigured: OPENAI_API_KEY (or VITE_OPENAI_API_KEY) is missing",
+        }),
       };
     }
 
     const openai = new OpenAI({ apiKey });
 
-    const system = `You are an expert architectural assistant. Extract structured apartment geometry from a blueprint image. ${REQUIRED_SCHEMA_HINT}`;
+    // Optional preprocessing via scripts/remove_interior_lines.py
+    const maybeRunPreprocessor = async (dataUrl: string): Promise<string> => {
+      const match = dataUrl.match(/^data:image\/(png|jpeg|jpg);base64,(.+)$/);
+      if (!match) return dataUrl;
+
+      // Locate script in common local/dev layouts
+      const candidateScripts = [
+        path.join(__dirname, "..", "..", "scripts", "remove_interior_lines.py"), // when bundled next to netlify functions
+        path.join(__dirname, "..", "scripts", "remove_interior_lines.py"),
+        path.join(process.cwd(), "scripts", "remove_interior_lines.py"), // local dev from repo root
+      ];
+      const scriptPath = candidateScripts.find((p) => fs.existsSync(p));
+      if (!scriptPath) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[blueprint-to-plan] remove_interior_lines.py not found; skipping preprocessing",
+          { searchPaths: candidateScripts }
+        );
+        return dataUrl;
+      }
+
+      const ext = match[1] === "jpeg" ? "jpg" : match[1];
+      const buf = Buffer.from(match[2], "base64");
+      const tmpIn = path.join(tmpdir(), `bp_in.${ext}`);
+      const tmpOut = path.join(tmpdir(), `bp_out.png`);
+      await fs.promises.writeFile(tmpIn, buf);
+
+      try {
+        // eslint-disable-next-line no-console
+        console.log("[blueprint-to-plan] running Python preprocessor", {
+          scriptPath,
+          tmpIn,
+          tmpOut,
+        });
+        await promisify(execFile)("python3", [scriptPath, tmpIn, tmpOut], {
+          timeout: 15000,
+        });
+        const cleaned = await fs.promises.readFile(tmpOut);
+        // eslint-disable-next-line no-console
+        console.log("[blueprint-to-plan] preprocessing complete, using cleaned image");
+        return `data:image/png;base64,${cleaned.toString("base64")}`;
+      } catch (err) {
+        // If preprocessing fails, fall back to original image
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[blueprint-to-plan] preprocessing failed, using original image",
+          err
+        );
+        return dataUrl;
+      } finally {
+        // best-effort cleanup
+        void fs.promises.unlink(tmpIn).catch(() => {});
+        void fs.promises.unlink(tmpOut).catch(() => {});
+      }
+    };
+
+    const preprocessedImage = await maybeRunPreprocessor(imageBase64);
+    // Debug: indicate whether image was changed
+    // eslint-disable-next-line no-console
+    console.log(
+      "[blueprint-to-plan] image preprocessed",
+      preprocessedImage === imageBase64 ? "original-used" : "cleaned-used"
+    );
+
+    const system = `
+You are a computer-vision architectural parser.
+
+Your task is to extract ONLY structural walls from a blueprint image and return
+ONLY room polygons formed exclusively by those walls.
+
+You must be conservative.
+If uncertain, exclude geometry rather than guessing.
+
+========================
+WALL IDENTIFICATION RULES
+========================
+
+Walls are the darkest, thickest, and most continuous strokes in the entire image.
+
+ONLY consider strokes within the TOP 5% of stroke thickness globally.
+Any stroke thinner than the exterior perimeter walls is NOT a wall.
+
+A stroke qualifies as a wall ONLY IF:
+1. It matches the dominant wall stroke thickness
+2. It connects to other walls
+3. It contributes to enclosing a room
+
+If removing a stroke does NOT break room enclosure, it is NOT a wall.
+
+====================
+ABSOLUTE EXCLUSIONS
+====================
+
+NEVER trace or infer walls from:
+- Furniture (beds, sofas, tables, chairs)
+- Built-ins or cabinetry (kitchen counters, wardrobes, closets)
+- Appliances (stoves, ovens, refrigerators, washers/dryers)
+- Plumbing fixtures (toilets, sinks, showers, tubs, vanities)
+- Doors, door swings, frames, hinges
+- Windows or glazing lines
+- Dashed, dotted, or broken lines
+- Thin interior partitions or guides
+- Floor tiles, grids, hatching, shading
+- Symbols, icons, annotations, or dimensions
+
+If a shape could plausibly be furniture, it is NOT a wall.
+
+========================
+THICKNESS & AREA FILTERS
+========================
+
+Reject any stroke or shape:
+- Thinner than ~0.15 meters equivalent
+- With area < 0.5 m²
+
+Exception ONLY if it connects two qualifying wall segments
+AND matches their thickness exactly.
+
+========================
+CONFLICT RESOLUTION RULE
+========================
+
+When ambiguous:
+- Prefer under-extraction
+- Missing a wall is acceptable
+- Tracing furniture is NOT acceptable
+
+================
+ROOM & FLOOR LOGIC
+================
+
+Return ONLY room polygons formed by closed wall loops.
+
+Each room polygon represents the FLOOR of that room.
+Floors must be perfectly contained within walls.
+
+DO NOT:
+- Create a bounding box
+- Create a convex hull
+- Merge multiple rooms
+- Fill the entire apartment outline
+- Infer missing boundaries
+- Use furniture or symbols to guide geometry
+
+If walls do not form a closed enclosure, DO NOT return a room.
+
+=================
+FAILURE CONDITION
+=================
+
+If ANY furniture, fixture, or interior detailing influenced wall placement,
+RETURN AN EMPTY RESULT.
+
+${REQUIRED_SCHEMA_HINT}
+`;
+
     const user: any = {
-      role: 'user',
+      role: "user",
       content: [
-        { type: 'text', text: 'Analyze this blueprint image and return the plan JSON.' },
-        { type: 'image_url', image_url: { url: imageBase64 } }
-      ]
+        {
+          type: "text",
+          text: "Analyze this blueprint image and return the plan JSON.",
+        },
+        { type: "image_url", image_url: { url: preprocessedImage } },
+      ],
     };
 
     // Use GPT-4o-mini with JSON mode for deterministic parsing
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      temperature: 0.2,
-      response_format: { type: 'json_object' } as any,
-      messages: [
-        { role: 'system', content: system },
-        user
-      ]
+      model: "gpt-4o-mini",
+      temperature: 0,
+      response_format: { type: "json_object" } as any,
+      messages: [{ role: "system", content: system }, user],
     });
 
-    const rawText = completion.choices?.[0]?.message?.content || '';
+    const rawText = completion.choices?.[0]?.message?.content || "";
 
     // Parse JSON directly; fallback to loose extraction if needed
     let plan: Plan;
@@ -118,30 +297,74 @@ export async function handler(event: any) {
     }
 
     // Basic validation
-    if (!plan || plan.units !== 'meters' || !Array.isArray(plan.rooms)) {
-      throw new Error('Invalid plan JSON shape');
+    if (!plan || plan.units !== "meters" || !Array.isArray(plan.rooms)) {
+      throw new Error("Invalid plan JSON shape");
+    }
+
+    // Defensive filtering to enforce walls-only output
+    const furnitureTerms = [
+      "sofa",
+      "chair",
+      "table",
+      "bed",
+      "sink",
+      "toilet",
+      "shower",
+      "bathtub",
+      "cabinet",
+      "stove",
+      "oven",
+      "fridge",
+      "wardrobe",
+      "closet",
+      "washer",
+      "dryer",
+      "appliance",
+      "fixture",
+      "island",
+    ];
+
+    plan.rooms = plan.rooms.filter((room) => {
+      if (!room || !Array.isArray(room.polygon)) return false;
+      const name = (room.name || "").toLowerCase();
+      if (furnitureTerms.some((term) => name.includes(term))) return false;
+      const area = polygonArea(room.polygon);
+      // Allow very small rooms but drop clearly degenerate polygons
+      if (!Number.isFinite(area) || area <= 0) return false;
+      return true;
+    });
+
+    if (plan.rooms.length === 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[blueprint-to-plan] model returned no usable rooms after filtering; returning original plan"
+      );
+      // fall back to unfiltered rooms instead of failing hard
+      plan.rooms = (plan as any).rooms ?? [];
     }
 
     return {
       statusCode: 200,
-      headers: { ...corsHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plan })
+      headers: { ...corsHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ plan }),
     };
   } catch (err: any) {
-    const message = err?.message || 'Unknown error';
+    // eslint-disable-next-line no-console
+    console.error("[blueprint-to-plan] unhandled error", err);
+    const message = err?.message || "Unknown error";
     return {
       statusCode: 500,
       headers: corsHeaders(),
-      body: JSON.stringify({ error: message })
+      body: JSON.stringify({ error: message }),
     };
   }
 }
 
 function corsHeaders() {
   return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
   };
 }
 
@@ -154,7 +377,15 @@ function extractJson(text: string): string {
 
   const match = text.match(/\{[\s\S]*\}$/);
   if (match) return match[0];
-  throw new Error('Failed to parse JSON from model output');
+  throw new Error("Failed to parse JSON from model output");
 }
 
-
+function polygonArea(points: number[][]): number {
+  let area = 0;
+  for (let i = 0; i < points.length; i++) {
+    const [x1, y1] = points[i];
+    const [x2, y2] = points[(i + 1) % points.length];
+    area += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(area) / 2;
+}

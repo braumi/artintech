@@ -202,6 +202,7 @@ export class ThreeApartmentViewer {
   private floorMaterialCache: Map<FloorMaterialKey, THREE.MeshStandardMaterial> = new Map();
   private floorTextureCache: Map<FloorMaterialKey, THREE.Texture> = new Map();
   private houseModelRoot: THREE.Object3D | null = null;
+  private blueprintGroup: THREE.Group | null = null;
   private originalFloorMaterials: Map<THREE.Mesh, THREE.MeshStandardMaterial> = new Map();
   private wallMaterials: Set<THREE.MeshStandardMaterial> = new Set();
   private originalFloorTextures: Map<THREE.Material, THREE.Texture | null> = new Map();
@@ -318,12 +319,16 @@ export class ThreeApartmentViewer {
     if (this.houseModelRoot && this.rootGroup) {
       this.rootGroup.remove(this.houseModelRoot);
     }
+    if (this.blueprintGroup && this.rootGroup) {
+      this.rootGroup.remove(this.blueprintGroup);
+    }
     this.floors = [];
     this.walls = [];
     this.wallBounds = [];
     this.wallMaterials.clear();
     this.originalFloorMaterials.clear();
     this.originalFloorTextures.clear();
+    this.blueprintGroup = null;
     this.houseModelRoot = null;
     this.clearFurniture();
     this.setActiveFurniture(null);
@@ -514,10 +519,14 @@ export class ThreeApartmentViewer {
     if (this.houseModelRoot && this.rootGroup) {
       this.rootGroup.remove(this.houseModelRoot);
     }
+    if (this.blueprintGroup && this.rootGroup) {
+      this.rootGroup.remove(this.blueprintGroup);
+    }
     this.floors = [];
     this.walls = [];
     this.wallBounds = [];
     this.houseModelRoot = null;
+    this.blueprintGroup = null;
     this.clearFurniture();
     this.setActiveFurniture(null);
 
@@ -735,6 +744,240 @@ export class ThreeApartmentViewer {
     this.emitFurnitureUpdate();
   }
 
+  async loadBlueprintFromImage(source: File | string): Promise<void> {
+    if (!this.scene || !this.rootGroup) return;
+
+    const image = await this.readImageSource(source);
+    const { mask, width, height } = this.getBinaryMask(image);
+
+    // Clear existing content
+    this.floors.forEach(m => this.rootGroup!.remove(m));
+    this.walls.forEach(m => this.rootGroup!.remove(m));
+    if (this.houseModelRoot && this.rootGroup) {
+      this.rootGroup.remove(this.houseModelRoot);
+    }
+    if (this.blueprintGroup && this.rootGroup) {
+      this.rootGroup.remove(this.blueprintGroup);
+    }
+    this.floors = [];
+    this.walls = [];
+    this.wallBounds = [];
+    this.wallMaterials.clear();
+    this.originalFloorMaterials.clear();
+    this.originalFloorTextures.clear();
+    this.houseModelRoot = null;
+    this.blueprintGroup = null;
+    this.clearFurniture();
+    this.setActiveFurniture(null);
+
+    const scale = 0.02; // meters per pixel
+    const wallHeight = 2;
+    const wallThickness = 0.05; // Reduced from 0.1 to make walls thinner
+    const minRun = 6; // pixels
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.0, roughness: 0.85 });
+    this.wallMaterials.add(wallMat);
+
+    const group = new THREE.Group();
+    const wallMeshes: THREE.Mesh[] = [];
+
+    const addWallSegment = (lengthPx: number, cxPx: number, czPx: number, orientation: 'horizontal' | 'vertical') => {
+      if (lengthPx < minRun) return;
+      const length = lengthPx * scale;
+      const posX = (cxPx - width / 2) * scale;
+      const posZ = (czPx - height / 2) * scale;
+      const geom =
+        orientation === 'horizontal'
+          ? new THREE.BoxGeometry(length, wallHeight, wallThickness)
+          : new THREE.BoxGeometry(wallThickness, wallHeight, length);
+      const mesh = new THREE.Mesh(geom, wallMat);
+      mesh.position.set(posX, wallHeight / 2, posZ);
+      group.add(mesh);
+      wallMeshes.push(mesh);
+    };
+
+    // Horizontal runs
+    for (let y = 0; y < height; y++) {
+      let runStart = -1;
+      for (let x = 0; x <= width; x++) {
+        const isBlack = x < width ? mask[y * width + x] === 1 : false;
+        if (isBlack && runStart === -1) {
+          runStart = x;
+        } else if (!isBlack && runStart !== -1) {
+          const runEnd = x - 1;
+          const length = runEnd - runStart + 1;
+          const centerX = (runStart + runEnd) / 2;
+          addWallSegment(length, centerX, y, 'horizontal');
+          runStart = -1;
+        }
+      }
+    }
+
+    // Vertical runs
+    for (let x = 0; x < width; x++) {
+      let runStart = -1;
+      for (let y = 0; y <= height; y++) {
+        const isBlack = y < height ? mask[y * width + x] === 1 : false;
+        if (isBlack && runStart === -1) {
+          runStart = y;
+        } else if (!isBlack && runStart !== -1) {
+          const runEnd = y - 1;
+          const length = runEnd - runStart + 1;
+          const centerY = (runStart + runEnd) / 2;
+          addWallSegment(length, x, centerY, 'vertical');
+          runStart = -1;
+        }
+      }
+    }
+
+    this.rootGroup.add(group);
+    this.blueprintGroup = group;
+    this.walls = wallMeshes;
+    this.wallBounds = wallMeshes.map(mesh => new THREE.Box3().setFromObject(mesh));
+
+    // Create a visible floor whose outline follows the outer wall footprint.
+    const floorMesh = this.buildFloorFromWalls(wallMeshes, wallThickness);
+    if (floorMesh) {
+      this.rootGroup.add(floorMesh);
+      this.floors = [floorMesh];
+    }
+
+    // Frame camera on the traced blueprint
+    if (this.controls && this.camera) {
+      const span = Math.max(width, height) * scale;
+      const dist = Math.max(6, span * 0.9);
+      this.controls.target.set(0, wallHeight / 2, 0);
+      this.controls.update();
+      this.camera.position.set(dist, dist, dist);
+    }
+
+    this.emitFurnitureUpdate();
+  }
+
+  /**
+   * Build a floor mesh whose 2D outline follows the outer footprint of the
+   * traced wall meshes. This approximates the apartment contour instead of
+   * using a simple bounding rectangle.
+   */
+  private buildFloorFromWalls(wallMeshes: THREE.Mesh[], wallThickness: number): THREE.Mesh | null {
+    if (wallMeshes.length === 0) return null;
+
+    const points: THREE.Vector2[] = [];
+    const tmpBox = new THREE.Box3();
+
+    wallMeshes.forEach(mesh => {
+      tmpBox.setFromObject(mesh);
+      const minX = tmpBox.min.x;
+      const maxX = tmpBox.max.x;
+      const minZ = tmpBox.min.z;
+      const maxZ = tmpBox.max.z;
+      points.push(
+        new THREE.Vector2(minX, minZ),
+        new THREE.Vector2(minX, maxZ),
+        new THREE.Vector2(maxX, maxZ),
+        new THREE.Vector2(maxX, minZ),
+      );
+    });
+
+    // Compute a simple 2D convex hull around all wall corners so the floor
+    // follows the outer contour (good enough for most rectangular plans).
+    const hull = this.computeConvexHull(points);
+    if (hull.length < 3) return null;
+
+    const shape = new THREE.Shape(hull);
+    const geom = new THREE.ShapeGeometry(shape);
+    const mat = this.getFloorMaterial();
+    const floorMesh = new THREE.Mesh(geom, mat);
+    floorMesh.rotation.x = -Math.PI / 2;
+    floorMesh.position.y = -0.005;
+    floorMesh.receiveShadow = true;
+    return floorMesh;
+  }
+
+  /**
+   * Monotone-chain convex hull for an array of Vector2 points.
+   */
+  private computeConvexHull(points: THREE.Vector2[]): THREE.Vector2[] {
+    const pts = points
+      .map(p => p.clone())
+      .sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+
+    if (pts.length <= 3) return pts;
+
+    const cross = (o: THREE.Vector2, a: THREE.Vector2, b: THREE.Vector2) =>
+      (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+    const lower: THREE.Vector2[] = [];
+    for (const p of pts) {
+      while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
+        lower.pop();
+      }
+      lower.push(p);
+    }
+
+    const upper: THREE.Vector2[] = [];
+    for (let i = pts.length - 1; i >= 0; i--) {
+      const p = pts[i];
+      while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
+        upper.pop();
+      }
+      upper.push(p);
+    }
+
+    upper.pop();
+    lower.pop();
+    return lower.concat(upper);
+  }
+
+  private async readImageSource(source: File | string): Promise<HTMLImageElement> {
+    const load = (dataUrl: string): Promise<HTMLImageElement> =>
+      new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          resolve(img);
+          URL.revokeObjectURL(img.src);
+        };
+        img.onerror = reject;
+        img.src = dataUrl;
+      });
+
+    if (typeof source === 'string') {
+      return await load(source);
+    }
+
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(source);
+    });
+
+    return await load(dataUrl);
+  }
+
+  private getBinaryMask(image: HTMLImageElement): { mask: Uint8Array; width: number; height: number } {
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth || image.width;
+    canvas.height = image.naturalHeight || image.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return { mask: new Uint8Array(), width: 0, height: 0 };
+    }
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const mask = new Uint8Array(canvas.width * canvas.height);
+    // Original, working threshold for the JS tracer
+    const threshold = 60;
+    for (let i = 0; i < canvas.width * canvas.height; i++) {
+      const r = data[i * 4];
+      const g = data[i * 4 + 1];
+      const b = data[i * 4 + 2];
+      const a = data[i * 4 + 3];
+      const brightness = (r + g + b) / 3;
+      mask[i] = a > 16 && brightness < threshold ? 1 : 0;
+    }
+    return { mask, width: canvas.width, height: canvas.height };
+  }
+
   applyMaterialToFloors(key: FloorMaterialKey): void {
     const mat = this.getFloorMaterial(key);
     this.floors.forEach(f => { f.material = mat; });
@@ -785,6 +1028,7 @@ export class ThreeApartmentViewer {
     this.wallMaterials.clear();
     this.originalFloorMaterials.clear();
     this.originalFloorTextures.clear();
+    this.blueprintGroup = null;
     this.houseModelRoot = null;
     this.furnitureItems.clear();
     this.selectFurnitureInternal(null, true);
