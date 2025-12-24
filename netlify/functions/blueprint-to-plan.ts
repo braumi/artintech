@@ -1,8 +1,25 @@
 /*
   Netlify Function: blueprint-to-plan
   - Accepts POST JSON { imageBase64: string }
-  - Calls OpenAI Vision to extract apartment plan geometry
-  - Returns structured JSON describing rooms and walls suitable for 3D rendering
+  - Tries CubiCasa5k API first (if configured) to extract walls, doors, windows
+  - Falls back to OpenAI Vision API if CubiCasa5k is not available
+  - Returns structured JSON describing rooms, walls, doors, windows suitable for 3D rendering
+
+  CubiCasa5k API Configuration:
+  - Set CUBICASA_API_URL environment variable to your API endpoint
+  - Optional: Set CUBICASA_API_KEY for authentication
+  - Example: CUBICASA_API_URL=https://api.example.com/v1/floorplan/parse
+  
+  Expected CubiCasa5k API format:
+  POST { image: "data:image/png;base64,..." }
+  Response: {
+    walls?: [{ type: "wall", points: [[x,y],...], thickness?: number }],
+    doors?: [{ type: "door", points: [[x,y],...], opening_direction?: string }],
+    windows?: [{ type: "window", points: [[x,y],...] }],
+    rooms?: [{ type: "room", points: [[x,y],...], room_type?: string }],
+    image_width?: number,
+    image_height?: number
+  }
 */
 
 import OpenAI from "openai";
@@ -18,12 +35,250 @@ type PlanRoom = {
   floorMaterial?: string;
 };
 
+type PlanDoor = {
+  polygon: number[][]; // door opening outline
+  opening_direction?: string;
+};
+
+type PlanWindow = {
+  polygon: number[][]; // window outline
+};
+
 type Plan = {
   units: "meters";
   ceilingHeightMeters: number;
   defaultWallThicknessMeters: number;
   rooms: PlanRoom[];
+  doors?: PlanDoor[];
+  windows?: PlanWindow[];
 };
+
+// CubiCasa5k API response types
+type CubiCasaWall = {
+  type: "wall";
+  points: number[][]; // [[x, y], ...] in pixels
+  thickness?: number;
+};
+
+type CubiCasaDoor = {
+  type: "door";
+  points: number[][];
+  opening_direction?: string;
+};
+
+type CubiCasaWindow = {
+  type: "window";
+  points: number[][];
+};
+
+type CubiCasaRoom = {
+  type: "room";
+  points: number[][];
+  room_type?: string;
+};
+
+type CubiCasaResponse = {
+  walls?: CubiCasaWall[];
+  doors?: CubiCasaDoor[];
+  windows?: CubiCasaWindow[];
+  rooms?: CubiCasaRoom[];
+  image_width?: number;
+  image_height?: number;
+};
+
+/**
+ * Calls CubiCasa5k API to extract walls, doors, windows from blueprint
+ * Returns null if API is not configured or fails
+ */
+async function callCubiCasaAPI(
+  imageBase64: string
+): Promise<Plan | null> {
+  const apiUrl =
+    process.env.CUBICASA_API_URL || process.env.VITE_CUBICASA_API_URL;
+  if (!apiUrl) {
+    // eslint-disable-next-line no-console
+    console.log("[blueprint-to-plan] CubiCasa5k API not configured, skipping");
+    return null;
+  }
+
+  try {
+    // eslint-disable-next-line no-console
+    console.log("[blueprint-to-plan] Calling CubiCasa5k API", { apiUrl });
+
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(process.env.CUBICASA_API_KEY && {
+          Authorization: `Bearer ${process.env.CUBICASA_API_KEY}`,
+        }),
+      },
+      body: JSON.stringify({
+        image: imageBase64,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[blueprint-to-plan] CubiCasa5k API error",
+        response.status,
+        errorText
+      );
+      return null;
+    }
+
+    const data: CubiCasaResponse = await response.json();
+    // eslint-disable-next-line no-console
+    console.log("[blueprint-to-plan] CubiCasa5k API response", {
+      walls: data.walls?.length || 0,
+      doors: data.doors?.length || 0,
+      windows: data.windows?.length || 0,
+      rooms: data.rooms?.length || 0,
+    });
+
+    // Convert CubiCasa5k format to our Plan format
+    return convertCubiCasaToPlan(data);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[blueprint-to-plan] CubiCasa5k API exception", err);
+    return null;
+  }
+}
+
+/**
+ * Converts CubiCasa5k API response to our Plan format
+ */
+function convertCubiCasaToPlan(data: CubiCasaResponse): Plan {
+  const imageWidth = data.image_width || 1000; // default fallback
+  const imageHeight = data.image_height || 1000;
+  
+  // Estimate scale: assume blueprint represents ~20m x 20m typical apartment
+  // This is a heuristic - adjust based on your typical blueprint sizes
+  const scaleX = 20 / imageWidth; // meters per pixel
+  const scaleY = 20 / imageHeight;
+  const scale = Math.min(scaleX, scaleY); // use smaller to ensure fit
+
+  // Convert pixel coordinates to meters
+  const pixelsToMeters = (points: number[][]): number[][] => {
+    return points.map(([x, y]) => [x * scale, y * scale]);
+  };
+
+  // Extract doors from CubiCasa5k response
+  const doors: PlanDoor[] = [];
+  if (data.doors && data.doors.length > 0) {
+    for (const door of data.doors) {
+      if (door.points && door.points.length >= 2) {
+        doors.push({
+          polygon: pixelsToMeters(door.points),
+          opening_direction: door.opening_direction,
+        });
+      }
+    }
+  }
+
+  // Extract windows from CubiCasa5k response
+  const windows: PlanWindow[] = [];
+  if (data.windows && data.windows.length > 0) {
+    for (const window of data.windows) {
+      if (window.points && window.points.length >= 2) {
+        windows.push({
+          polygon: pixelsToMeters(window.points),
+        });
+      }
+    }
+  }
+
+  // Extract rooms from CubiCasa5k response
+  const rooms: PlanRoom[] = [];
+  if (data.rooms && data.rooms.length > 0) {
+    for (const room of data.rooms) {
+      if (room.points && room.points.length >= 3) {
+        const polygon = pixelsToMeters(room.points);
+        rooms.push({
+          name: room.room_type || "Room",
+          polygon,
+        });
+      }
+    }
+  } else if (data.walls && data.walls.length > 0) {
+    // If no rooms provided, try to infer from walls
+    // Group walls that form closed loops
+    const wallSegments = data.walls.map((wall) => ({
+      points: pixelsToMeters(wall.points),
+      thickness: wall.thickness
+        ? wall.thickness * scale
+        : 0.1, // default 10cm
+    }));
+
+    // Simple approach: create rooms from wall-enclosed regions
+    // This is a simplified version - you may want more sophisticated polygon detection
+    // For now, we'll create a bounding box approach or use the walls to define rooms
+    // This is a placeholder - you'd need proper polygon clipping/union logic here
+    if (wallSegments.length > 0) {
+      // Find bounding box of all walls
+      let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity;
+      wallSegments.forEach((seg) => {
+        seg.points.forEach(([x, y]) => {
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        });
+      });
+
+      // Create a single room from the bounding box (simplified)
+      // In production, you'd want proper room detection from wall loops
+      if (minX < maxX && minY < maxY) {
+        rooms.push({
+          name: "Main Room",
+          polygon: [
+            [minX, minY],
+            [maxX, minY],
+            [maxX, maxY],
+            [minX, maxY],
+          ],
+        });
+      }
+    }
+  }
+
+  // Calculate average wall thickness from walls
+  let avgWallThickness = 0.1; // default 10cm
+  if (data.walls && data.walls.length > 0) {
+    const thicknesses = data.walls
+      .map((w) => w.thickness)
+      .filter((t): t is number => t !== undefined);
+    if (thicknesses.length > 0) {
+      avgWallThickness =
+        (thicknesses.reduce((a, b) => a + b, 0) / thicknesses.length) * scale;
+    }
+  }
+
+  return {
+    units: "meters",
+    ceilingHeightMeters: 2.8, // default ceiling height
+    defaultWallThicknessMeters: Math.max(0.05, Math.min(0.2, avgWallThickness)), // clamp between 5cm and 20cm
+    rooms: rooms.length > 0 ? rooms : [
+      // Fallback: create a default room if none detected
+      {
+        name: "Room",
+        polygon: [
+          [0, 0],
+          [5, 0],
+          [5, 5],
+          [0, 5],
+        ],
+      },
+    ],
+    doors: doors.length > 0 ? doors : undefined,
+    windows: windows.length > 0 ? windows : undefined,
+  };
+}
 
 const REQUIRED_SCHEMA_HINT = `
 Return ONLY valid JSON with this schema:
@@ -174,7 +429,15 @@ export async function handler(event: any) {
       preprocessedImage === imageBase64 ? "original-used" : "cleaned-used"
     );
 
-    const system = `
+    // Try CubiCasa5k API first if configured
+    let plan: Plan | null = await callCubiCasaAPI(preprocessedImage);
+    
+    // Fall back to OpenAI if CubiCasa5k is not available or failed
+    if (!plan) {
+      // eslint-disable-next-line no-console
+      console.log("[blueprint-to-plan] Using OpenAI Vision API as fallback");
+      
+      const system = `
 You are a computer-vision architectural parser.
 
 Your task is to extract ONLY structural walls from a blueprint image and return
@@ -266,34 +529,34 @@ RETURN AN EMPTY RESULT.
 ${REQUIRED_SCHEMA_HINT}
 `;
 
-    const user: any = {
-      role: "user",
-      content: [
-        {
-          type: "text",
-          text: "Analyze this blueprint image and return the plan JSON.",
-        },
-        { type: "image_url", image_url: { url: preprocessedImage } },
-      ],
-    };
+      const user: any = {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Analyze this blueprint image and return the plan JSON.",
+          },
+          { type: "image_url", image_url: { url: preprocessedImage } },
+        ],
+      };
 
-    // Use GPT-4o-mini with JSON mode for deterministic parsing
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0,
-      response_format: { type: "json_object" } as any,
-      messages: [{ role: "system", content: system }, user],
-    });
+      // Use GPT-4o-mini with JSON mode for deterministic parsing
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        temperature: 0,
+        response_format: { type: "json_object" } as any,
+        messages: [{ role: "system", content: system }, user],
+      });
 
-    const rawText = completion.choices?.[0]?.message?.content || "";
+      const rawText = completion.choices?.[0]?.message?.content || "";
 
-    // Parse JSON directly; fallback to loose extraction if needed
-    let plan: Plan;
-    try {
-      plan = JSON.parse(rawText);
-    } catch {
-      const jsonText = extractJson(rawText);
-      plan = JSON.parse(jsonText);
+      // Parse JSON directly; fallback to loose extraction if needed
+      try {
+        plan = JSON.parse(rawText);
+      } catch {
+        const jsonText = extractJson(rawText);
+        plan = JSON.parse(jsonText);
+      }
     }
 
     // Basic validation

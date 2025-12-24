@@ -6,7 +6,7 @@ import type {
 } from './three-viewer';
 import { supabase } from './supabaseClient';
 import * as THREE from 'three';
-import { getCleanedBlueprintImage, sendBlueprintForPlan } from './ai';
+import { getCleanedBlueprintImage, sendBlueprintForPlan, sendBlueprintToRoboflow } from './ai';
 // Lazy import OpenAI to avoid breaking the module if it fails
 type OpenAI = any;
 
@@ -55,6 +55,11 @@ export class Router {
   private currentUserName: string | null = null;
   private removeAuthListener: (() => void) | null = null;
   private escKeyHandler: ((event: KeyboardEvent) => void) | null = null;
+  private modalOpenHandler: (() => void) | null = null;
+  private modalBackdropHandler: (() => void) | null = null;
+  private lastModalOpenTime: number = 0;
+  private pendingBlueprintFile: File | null = null;
+  private blueprintSquareFootage: number | null = null;
   private logoutControllers: AbortController[] = [];
   private logoutDocHandler: ((event: Event) => void) | null = null;
 
@@ -1213,6 +1218,43 @@ export class Router {
           </div>
         </div>
       </div>
+      
+      <!-- Blueprint Scaling Modal -->
+      <div id="blueprint-scaling-modal" class="plan-modal" aria-hidden="true">
+        <div class="plan-modal__backdrop"></div>
+        <div class="plan-modal__dialog" role="dialog" aria-modal="true" style="max-width: 90vw; max-height: 90vh; overflow: hidden; display: flex; flex-direction: column;">
+          <header class="plan-modal__header" style="flex-shrink: 0;">
+            <div>
+              <h2>Set Blueprint Scale</h2>
+              <p>Drag the ruler to match a known distance, then enter the meters it represents.</p>
+            </div>
+            <button class="plan-modal__close" id="close-scaling-modal" aria-label="Close modal">×</button>
+          </header>
+          <div class="plan-modal__content" style="flex: 1; overflow: hidden; display: flex; gap: 20px; padding: 20px;">
+            <div class="blueprint-scaling-controls" style="flex: 0 0 300px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto;">
+              <div class="blueprint-scale-input" style="display: flex; flex-direction: column; gap: 10px;">
+                <label for="scale-meters-input" style="font-weight: 500; font-size: 14px;">This distance represents:</label>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <input type="number" id="scale-meters-input" min="0.1" step="0.1" value="1" style="padding: 10px; border: 1px solid #ddd; border-radius: 4px; width: 100px; font-size: 16px;" />
+                  <span style="font-size: 14px;">meters</span>
+                </div>
+              </div>
+              <div class="blueprint-scale-actions" style="display: flex; flex-direction: column; gap: 10px; margin-top: auto;">
+                <button class="btn-primary" id="apply-scaling" style="padding: 12px 20px; border: none; background: #007bff; color: #fff; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;">Apply Scale & Process</button>
+                <button class="btn-secondary" id="cancel-scaling" style="padding: 12px 20px; border: 1px solid #ddd; background: #fff; border-radius: 4px; cursor: pointer; font-size: 14px;">Cancel</button>
+              </div>
+            </div>
+            <div class="blueprint-image-container" id="blueprint-image-container" style="flex: 1; position: relative; background: #f5f5f5; overflow: hidden; display: flex; align-items: center; justify-content: center; min-height: 0;">
+              <img id="blueprint-preview-image" alt="Blueprint preview" style="max-width: 100%; max-height: 100%; object-fit: contain; display: block;" />
+              <div class="ruler-line" id="ruler-line" style="position: absolute; top: 50px; left: 50px; width: 200px; height: 2px; background: #ff0000; cursor: move; z-index: 10;">
+                <div class="ruler-handle ruler-handle-start" id="ruler-handle-start" style="position: absolute; left: -5px; top: -5px; width: 12px; height: 12px; background: #ff0000; border: 2px solid #fff; border-radius: 50%; cursor: grab;"></div>
+                <div class="ruler-handle ruler-handle-end" id="ruler-handle-end" style="position: absolute; right: -5px; top: -5px; width: 12px; height: 12px; background: #ff0000; border: 2px solid #fff; border-radius: 50%; cursor: grab;"></div>
+                <div class="ruler-label" id="ruler-label" style="position: absolute; top: -25px; left: 50%; transform: translateX(-50%); background: rgba(255,255,255,0.9); padding: 2px 6px; border-radius: 3px; font-size: 12px; white-space: nowrap;">0 m</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     `;
   }
 
@@ -1876,6 +1918,21 @@ export class Router {
 
     const setModalState = (open: boolean) => {
       if (!planModal) return;
+      
+      // Prevent rapid multiple opens (debounce)
+      if (open) {
+        const now = Date.now();
+        if (now - this.lastModalOpenTime < 100) {
+          return; // Ignore if opened within last 100ms
+        }
+        this.lastModalOpenTime = now;
+        
+        // Check if modal is already open
+        if (planModal.classList.contains('open')) {
+          return; // Already open, don't open again
+        }
+      }
+      
       planModal.classList.toggle('open', open);
       planModal.setAttribute('aria-hidden', open ? 'false' : 'true');
       if (open) {
@@ -1901,42 +1958,10 @@ export class Router {
 
     const handleBlueprintUpload = async (file: File) => {
       if (!file) return;
-      try {
-        setBlueprintStatus('Processing blueprint...');
-
-        // 1) Wait for the Python cleaner (via blueprint-clean) so we trace the
-        // walls-only image in 3D, even if that takes a couple of seconds.
-        const cleanedDataUrl = await getCleanedBlueprintImage(file);
-        await viewer.loadBlueprintFromImage(cleanedDataUrl);
-
-        // 2) In parallel, send the original file to blueprint-to-plan for AI JSON
-        void (async () => {
-          try {
-            // eslint-disable-next-line no-console
-            console.log('[Blueprint] sending image to blueprint-to-plan function');
-            const plan = await sendBlueprintForPlan(file);
-            // eslint-disable-next-line no-console
-            console.log('[Blueprint] received plan from blueprint-to-plan', plan);
-          } catch (e) {
-            // eslint-disable-next-line no-console
-            console.error('[Blueprint] blueprint-to-plan failed', e);
-          }
-        })();
-
-        this.currentPlanId = 'blueprint-upload';
-        this.currentPlan = null;
-        setBlueprintSummary(file.name);
-        applyFurnitureSelection(null);
-        syncPlanSelection();
-        setModalState(false);
-        setBlueprintStatus('Blueprint traced. Add furniture or paint walls.');
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error(err);
-        setBlueprintStatus('Failed to process blueprint. Try another image.');
-        // eslint-disable-next-line no-alert
-        alert('Could not process that blueprint image. Please try a clearer file.');
-      }
+      
+      // Store the file and show scaling modal
+      this.pendingBlueprintFile = file;
+      this.showBlueprintScalingModal(file);
     };
 
     const loadPlan = async (plan: DemoPlanConfig) => {
@@ -1946,6 +1971,7 @@ export class Router {
       }
       this.currentPlanId = plan.id;
       this.currentPlan = plan.plan;
+      this.blueprintSquareFootage = null; // Reset square footage for demo plans
       if (plan.staticModelBase) {
         await viewer.loadStaticHouseModel(plan.staticModelBase);
       } else {
@@ -1961,7 +1987,11 @@ export class Router {
     viewer.clearFurniture();
     applyFurnitureSelection(null);
     this.updateActivePlanSummary(null);
-    setModalState(true);
+    
+    // Only open modal once when first attaching listeners (if no plan is loaded)
+    if (!this.currentPlanId) {
+      setModalState(true);
+    }
 
     const openBlueprintPicker = (input: HTMLInputElement) => {
       if (planGate) {
@@ -2003,6 +2033,9 @@ export class Router {
         (event.target as HTMLInputElement).value = '';
       });
     });
+    
+    // Setup blueprint scaling modal
+    this.setupBlueprintScalingModal();
 
     planButtons.forEach(button => {
       button.addEventListener('click', () => {
@@ -2168,8 +2201,27 @@ export class Router {
     };
     requestAnimationFrame(maintainSelectionOverlay);
 
-    modalOpenBtn?.addEventListener('click', () => setModalState(true));
-    modalBackdrop?.addEventListener('click', attemptCloseModal);
+    // Remove old modal event listeners if they exist
+    if (this.modalOpenHandler) {
+      modalOpenBtn?.removeEventListener('click', this.modalOpenHandler);
+    }
+    if (this.modalBackdropHandler) {
+      modalBackdrop?.removeEventListener('click', this.modalBackdropHandler);
+    }
+
+    // Remove old modal event listeners if they exist
+    if (this.modalOpenHandler) {
+      modalOpenBtn?.removeEventListener('click', this.modalOpenHandler);
+    }
+    if (this.modalBackdropHandler) {
+      modalBackdrop?.removeEventListener('click', this.modalBackdropHandler);
+    }
+
+    // Store handlers and add new event listeners
+    this.modalOpenHandler = () => setModalState(true);
+    this.modalBackdropHandler = attemptCloseModal;
+    modalOpenBtn?.addEventListener('click', this.modalOpenHandler);
+    modalBackdrop?.addEventListener('click', this.modalBackdropHandler);
 
     // Wall color button with palette (like furniture color button)
     const wallColorBtn = this.appElement.querySelector('#wall-color-btn') as HTMLButtonElement | null;
@@ -2567,6 +2619,11 @@ Be friendly, helpful, enthusiastic, and conversational. Make your responses feel
             const planStatus = this.currentPlanId 
               ? 'A floor plan is currently loaded and ready for furniture placement.' 
               : 'No floor plan is currently loaded. The user must select a floor plan first before placing furniture.';
+            
+            const squareFootageInfo = this.blueprintSquareFootage 
+              ? `The current blueprint has a total area of approximately ${this.blueprintSquareFootage.toFixed(0)} square feet (${(this.blueprintSquareFootage / 10.764).toFixed(2)} square meters). When users ask about square footage, area, or size, you can provide this information.`
+              : '';
+            
             conversationHistory[0].content = `You are a helpful AI assistant for an interior design and floor plan application. Your role is to help users design their spaces by placing furniture and answering questions about their floor plans.
 
 Available furniture types:
@@ -2580,6 +2637,7 @@ Available furniture types:
 Available colors: gray, white, black, light gray, dark gray, warm wood
 
 CURRENT STATUS: ${planStatus}
+${squareFootageInfo ? `\nBLUEPRINT INFORMATION:\n${squareFootageInfo}\n` : ''}
 
 When a user asks to place furniture (and a plan is loaded):
 1. Understand what furniture they want (type, quantity, color if specified)
@@ -2592,6 +2650,7 @@ You can also:
 - Help users understand their space better
 - Have natural, engaging conversations about interior design
 - Answer questions about furniture, colors, and layout
+- Answer questions about the blueprint's square footage, area, or size when available
 
 Be friendly, helpful, enthusiastic, and conversational. Make your responses feel natural and engaging, not robotic.`;
           }
@@ -3811,5 +3870,241 @@ Be friendly, helpful, enthusiastic, and conversational. Make your responses feel
     suggestionBoxes.forEach(box => {
       box.classList.remove('active');
     });
+  }
+  
+  private showBlueprintScalingModal(file: File): void {
+    const modal = this.appElement.querySelector('#blueprint-scaling-modal') as HTMLElement | null;
+    if (!modal) return;
+    
+    const img = modal.querySelector('#blueprint-preview-image') as HTMLImageElement | null;
+    if (img) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        if (e.target?.result && img) {
+          img.src = e.target.result as string;
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+    
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden', 'false');
+  }
+  
+  private hideBlueprintScalingModal(): void {
+    const modal = this.appElement.querySelector('#blueprint-scaling-modal') as HTMLElement | null;
+    if (!modal) return;
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+  }
+  
+  private setupBlueprintScalingModal(): void {
+    const modal = this.appElement.querySelector('#blueprint-scaling-modal') as HTMLElement | null;
+    if (!modal) return;
+    
+    const container = modal.querySelector('#blueprint-image-container') as HTMLElement | null;
+    const rulerLine = modal.querySelector('#ruler-line') as HTMLElement | null;
+    const rulerHandleStart = modal.querySelector('#ruler-handle-start') as HTMLElement | null;
+    const rulerHandleEnd = modal.querySelector('#ruler-handle-end') as HTMLElement | null;
+    const rulerLabel = modal.querySelector('#ruler-label') as HTMLElement | null;
+    const scaleInput = modal.querySelector('#scale-meters-input') as HTMLInputElement | null;
+    const applyBtn = modal.querySelector('#apply-scaling') as HTMLButtonElement | null;
+    const cancelBtn = modal.querySelector('#cancel-scaling') as HTMLButtonElement | null;
+    const closeBtn = modal.querySelector('#close-scaling-modal') as HTMLButtonElement | null;
+    const backdrop = modal.querySelector('.plan-modal__backdrop') as HTMLElement | null;
+    
+    if (!container || !rulerLine || !rulerHandleStart || !rulerHandleEnd || !rulerLabel || !scaleInput) return;
+    
+    let isDragging = false;
+    let dragHandle: HTMLElement | null = null;
+    let rulerStartX = 50;
+    let rulerStartY = 50;
+    let rulerEndX = 250;
+    let rulerEndY = 50;
+    
+    const updateRuler = () => {
+      if (!rulerLine || !rulerLabel) return;
+      const dx = rulerEndX - rulerStartX;
+      const dy = rulerEndY - rulerStartY;
+      const length = Math.sqrt(dx * dx + dy * dy);
+      const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+      
+      rulerLine.style.left = `${Math.min(rulerStartX, rulerEndX)}px`;
+      rulerLine.style.top = `${Math.min(rulerStartY, rulerEndY)}px`;
+      rulerLine.style.width = `${length}px`;
+      rulerLine.style.transform = `rotate(${angle}deg)`;
+      rulerLine.style.transformOrigin = '0 50%';
+      
+      if (rulerHandleStart) {
+        rulerHandleStart.style.left = '-5px';
+        rulerHandleStart.style.top = '-5px';
+      }
+      if (rulerHandleEnd) {
+        rulerHandleEnd.style.right = '-5px';
+        rulerHandleEnd.style.top = '-5px';
+      }
+      
+      const meters = parseFloat(scaleInput?.value || '1');
+      const pixelsPerMeter = length / meters;
+      if (rulerLabel) {
+        rulerLabel.textContent = `${meters.toFixed(1)} m`;
+      }
+    };
+    
+    const handleMouseDown = (e: MouseEvent, handle: HTMLElement) => {
+      e.preventDefault();
+      e.stopPropagation();
+      isDragging = true;
+      dragHandle = handle;
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+    };
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging || !dragHandle || !container) return;
+      const rect = container.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      if (dragHandle === rulerHandleStart) {
+        rulerStartX = Math.max(0, Math.min(x, rect.width));
+        rulerStartY = Math.max(0, Math.min(y, rect.height));
+      } else if (dragHandle === rulerHandleEnd) {
+        rulerEndX = Math.max(0, Math.min(x, rect.width));
+        rulerEndY = Math.max(0, Math.min(y, rect.height));
+      }
+      updateRuler();
+    };
+    
+    const handleMouseUp = () => {
+      isDragging = false;
+      dragHandle = null;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    rulerHandleStart?.addEventListener('mousedown', (e) => handleMouseDown(e, rulerHandleStart!));
+    rulerHandleEnd?.addEventListener('mousedown', (e) => handleMouseDown(e, rulerHandleEnd!));
+    
+    scaleInput.addEventListener('input', updateRuler);
+    
+    const handleApply = () => {
+      if (!this.pendingBlueprintFile || !container || !scaleInput) return;
+      
+      const img = modal.querySelector('#blueprint-preview-image') as HTMLImageElement | null;
+      if (!img || !img.complete) return;
+      
+      const imgRect = img.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const scaleX = img.naturalWidth / imgRect.width;
+      const scaleY = img.naturalHeight / imgRect.height;
+      
+      const dx = (rulerEndX - rulerStartX) * scaleX;
+      const dy = (rulerEndY - rulerStartY) * scaleY;
+      const pixelLength = Math.sqrt(dx * dx + dy * dy);
+      
+      const meters = parseFloat(scaleInput.value);
+      const scaleToMeters = meters / pixelLength;
+      
+      // Calculate square footage
+      const widthMeters = img.naturalWidth * scaleToMeters;
+      const heightMeters = img.naturalHeight * scaleToMeters;
+      const areaSquareMeters = widthMeters * heightMeters;
+      const areaSquareFeet = areaSquareMeters * 10.764; // Convert square meters to square feet
+      
+      this.blueprintSquareFootage = areaSquareFeet;
+      // eslint-disable-next-line no-console
+      console.log('[Blueprint] Calculated area:', {
+        widthMeters: widthMeters.toFixed(2),
+        heightMeters: heightMeters.toFixed(2),
+        areaSquareMeters: areaSquareMeters.toFixed(2),
+        areaSquareFeet: areaSquareFeet.toFixed(2)
+      });
+      
+      this.hideBlueprintScalingModal();
+      void this.processBlueprintWithScale(this.pendingBlueprintFile, scaleToMeters);
+      this.pendingBlueprintFile = null;
+    };
+    
+    applyBtn?.addEventListener('click', handleApply);
+    cancelBtn?.addEventListener('click', () => {
+      this.hideBlueprintScalingModal();
+      this.pendingBlueprintFile = null;
+    });
+    closeBtn?.addEventListener('click', () => {
+      this.hideBlueprintScalingModal();
+      this.pendingBlueprintFile = null;
+    });
+    backdrop?.addEventListener('click', () => {
+      this.hideBlueprintScalingModal();
+      this.pendingBlueprintFile = null;
+    });
+    
+    updateRuler();
+  }
+  
+  private async processBlueprintWithScale(file: File, scaleToMeters: number): Promise<void> {
+    const viewer = this.threeViewer;
+    if (!viewer) return;
+    
+    const setBlueprintStatus = (text: string) => {
+      const statuses = Array.from(this.appElement.querySelectorAll<HTMLElement>('#blueprint-upload-status'));
+      statuses.forEach(status => {
+        status.textContent = text;
+      });
+    };
+    
+    const setBlueprintSummary = (fileName: string) => {
+      const nameEl = this.appElement.querySelector('#active-plan-name') as HTMLElement | null;
+      const metaEl = this.appElement.querySelector('#active-plan-meta') as HTMLElement | null;
+      const descEl = this.appElement.querySelector('#active-plan-description') as HTMLElement | null;
+      if (nameEl) nameEl.textContent = 'Blueprint upload';
+      if (metaEl) metaEl.textContent = fileName ? `Tracing ${fileName}` : 'Tracing uploaded blueprint';
+      if (descEl) descEl.textContent = 'Walls are traced from black lines; add furniture on top.';
+    };
+    
+    const planModal = this.appElement.querySelector('#plan-modal') as HTMLElement | null;
+    const setModalState = (open: boolean) => {
+      if (!planModal) return;
+      planModal.classList.toggle('open', open);
+      planModal.setAttribute('aria-hidden', open ? 'false' : 'true');
+    };
+    
+    try {
+      setBlueprintStatus('Processing blueprint with Roboflow...');
+      
+      try {
+        // eslint-disable-next-line no-console
+        console.log('[Blueprint] sending image to Roboflow API with scale:', scaleToMeters);
+        const plan = await sendBlueprintToRoboflow(file, 40, scaleToMeters);
+        // eslint-disable-next-line no-console
+        console.log('[Blueprint] received plan from Roboflow', plan);
+        
+        await viewer.loadPlan(plan);
+        this.currentPlanId = 'blueprint-upload';
+        this.currentPlan = plan;
+        setBlueprintSummary(file.name);
+        setModalState(false);
+        this.hideBlueprintScalingModal();
+        setBlueprintStatus('Blueprint processed. Walls, doors, and windows detected.');
+      } catch (roboflowError) {
+        // eslint-disable-next-line no-console
+        console.error('[Blueprint] Roboflow API failed, falling back to image tracing', roboflowError);
+        const cleanedDataUrl = await getCleanedBlueprintImage(file);
+        await viewer.loadBlueprintFromImage(cleanedDataUrl);
+        this.currentPlanId = 'blueprint-upload';
+        this.currentPlan = null;
+        setBlueprintSummary(file.name);
+        setModalState(false);
+        this.hideBlueprintScalingModal();
+        setBlueprintStatus('Blueprint traced. Add furniture or paint walls.');
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err);
+      setBlueprintStatus('Failed to process blueprint. Try another image.');
+      // eslint-disable-next-line no-alert
+      alert('Could not process that blueprint image. Please try a clearer file.');
+    }
   }
 } 

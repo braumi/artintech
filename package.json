@@ -21,6 +21,7 @@
     "@gltf-transform/core": "^3.10.1",
     "@netlify/functions": "^5.1.2",
     "@supabase/supabase-js": "^2.87.1",
+    "axios": "^1.13.2",
     "earcut": "^2.2.4",
     "openai": "^4.72.0",
     "three": "^0.167.0",

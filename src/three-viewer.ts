@@ -40,6 +40,8 @@ const FURNITURE_MODEL_SCALE: Partial<Record<DemoFurnitureId, number>> = {
 };
 
 const furnitureModelCache = new Map<DemoFurnitureId, THREE.Object3D>();
+const doorModelCache = new Map<string, THREE.Object3D>();
+const windowModelCache = new Map<string, THREE.Object3D>();
 
 const FURNITURE_ASSET_PATH = 'components/';
 const HOUSE_MODEL_ASSET_PATH = 'components/house models/';
@@ -165,6 +167,98 @@ async function createFurnitureObject(id: DemoFurnitureId): Promise<THREE.Object3
   } catch (error) {
     console.error(`Failed to load 3D model for furniture "${id}"`, error);
     return new THREE.Group();
+  }
+}
+
+/**
+ * Load a door 3D model (if available), with fallback to null
+ * Models should be placed in the components/ directory as door.obj and door.mtl
+ */
+async function loadDoorModel(modelName: string = 'door'): Promise<THREE.Object3D | null> {
+  try {
+    if (doorModelCache.has(modelName)) {
+      // eslint-disable-next-line no-console
+      console.log(`[Door Model] Using cached model: ${modelName}`);
+      return doorModelCache.get(modelName)!.clone(true);
+    }
+    
+    // eslint-disable-next-line no-console
+    console.log(`[Door Model] Loading model: ${modelName}`);
+    const raw = await loadObjMtl(modelName);
+    
+    // Center the model at origin
+    const box = new THREE.Box3().setFromObject(raw);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    raw.position.sub(center);
+    
+    // Position so bottom is at y=0
+    raw.position.y -= box.min.y;
+    
+    // Enable shadows
+    raw.traverse(child => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+      }
+    });
+    
+    doorModelCache.set(modelName, raw);
+    // eslint-disable-next-line no-console
+    console.log(`[Door Model] Successfully loaded and cached: ${modelName}`);
+    return raw.clone(true);
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.log(`[Door Model] Model not found or failed to load: ${modelName}`, error);
+    // Model doesn't exist - this is fine, will use fallback geometry
+    return null;
+  }
+}
+
+/**
+ * Load a window 3D model (if available), with fallback to null
+ * Models should be placed in the components/ directory as window.obj and window.mtl
+ */
+async function loadWindowModel(modelName: string = 'window'): Promise<THREE.Object3D | null> {
+  try {
+    if (windowModelCache.has(modelName)) {
+      // eslint-disable-next-line no-console
+      console.log(`[Window Model] Using cached model: ${modelName}`);
+      return windowModelCache.get(modelName)!.clone(true);
+    }
+    
+    // eslint-disable-next-line no-console
+    console.log(`[Window Model] Loading model: ${modelName}`);
+    const raw = await loadObjMtl(modelName);
+    
+    // Center the model at origin
+    const box = new THREE.Box3().setFromObject(raw);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    raw.position.sub(center);
+    
+    // Position so bottom is at y=0
+    raw.position.y -= box.min.y;
+    
+    // Enable shadows
+    raw.traverse(child => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+      }
+    });
+    
+    windowModelCache.set(modelName, raw);
+    // eslint-disable-next-line no-console
+    console.log(`[Window Model] Successfully loaded and cached: ${modelName}`);
+    return raw.clone(true);
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.log(`[Window Model] Model not found or failed to load: ${modelName}`, error);
+    // Model doesn't exist - this is fine, will use fallback geometry
+    return null;
   }
 }
 
@@ -372,9 +466,41 @@ export class ThreeApartmentViewer {
       }
 
       // Walls along edges
-      for (let i = 0; i < room.polygon.length; i++) {
+      // Check if we have explicit wall data with door/window information from Roboflow
+      const hasExplicitWalls = room.walls && room.walls.length > 0;
+      
+      // If we have explicit walls, use them; otherwise, generate walls from polygon edges
+      const wallData: Array<{
+        start: number[];
+        end: number[];
+        doors?: Array<{ position: number; width: number }>;
+        windows?: Array<{ position: number; width: number }>;
+        // Legacy support
+        hasDoor?: boolean;
+        doorPosition?: number;
+        doorWidth?: number;
+        hasWindow?: boolean;
+        windowPosition?: number;
+        windowWidth?: number;
+      }> = hasExplicitWalls ? (room.walls || []) : room.polygon.map((_, i) => {
         const [x1, y1] = room.polygon[i];
         const [x2, y2] = room.polygon[(i + 1) % room.polygon.length];
+        return {
+          start: [x1, y1],
+          end: [x2, y2],
+          hasDoor: undefined as boolean | undefined,
+          doorPosition: undefined as number | undefined,
+          doorWidth: undefined as number | undefined,
+          hasWindow: undefined as boolean | undefined,
+          windowPosition: undefined as number | undefined,
+          windowWidth: undefined as number | undefined
+        };
+      });
+
+      for (let wallIdx = 0; wallIdx < wallData.length; wallIdx++) {
+        const wallInfo = wallData[wallIdx];
+        const [x1, y1] = wallInfo.start;
+        const [x2, y2] = wallInfo.end;
         const v1 = new THREE.Vector3(x1 - center.x, 0, y1 - center.z);
         const v2 = new THREE.Vector3(x2 - center.x, 0, y2 - center.z);
 
@@ -385,23 +511,49 @@ export class ThreeApartmentViewer {
         const mid = new THREE.Vector3().addVectors(v1, v2).multiplyScalar(0.5);
         const angle = Math.atan2(seg.z, seg.x);
 
-        const isExterior =
-          Math.abs(Math.abs(mid.z) - halfDepth) < halfDepth * 0.15 ||
-          Math.abs(Math.abs(mid.x) - planSize.x / 2) < planSize.x * 0.15;
-
-        let wantsDoor = false;
-        const isFrontExterior =
-          isExterior &&
-          Math.abs(mid.z + halfDepth) < Math.max(0.5, halfDepth * 0.1);
-        if (isFrontExterior && length > 1.6) {
-          // Primary entry door on a front-facing exterior wall
-          wantsDoor = true;
-        } else if (!isExterior && length > 1.4) {
-          // Interior walls long enough become door segments to keep rooms accessible
-          wantsDoor = true;
+        // Collect all openings (doors and windows) on this wall
+        const openings: Array<{ type: 'door' | 'window'; position: number; width: number; height?: number }> = [];
+        
+        // Add doors (support both array format and legacy single door format)
+        if (wallInfo.doors && wallInfo.doors.length > 0) {
+          wallInfo.doors.forEach(door => {
+            openings.push({ type: 'door', position: door.position, width: door.width });
+          });
+        } else if (wallInfo.hasDoor && wallInfo.doorPosition !== undefined) {
+          openings.push({ type: 'door', position: wallInfo.doorPosition, width: wallInfo.doorWidth ?? 0.9 });
         }
+        
+        // Add windows (support both array format and legacy single window format)
+        if (wallInfo.windows && wallInfo.windows.length > 0) {
+          wallInfo.windows.forEach(window => {
+            openings.push({ type: 'window', position: window.position, width: window.width });
+          });
+        } else if (wallInfo.hasWindow && wallInfo.windowPosition !== undefined) {
+          openings.push({ type: 'window', position: wallInfo.windowPosition, width: wallInfo.windowWidth ?? Math.min(1.8, length * 0.45) });
+        }
+        
+        // Sort openings by position along wall (0 to 1)
+        openings.sort((a, b) => a.position - b.position);
 
-        const wantsWindow = isExterior && !wantsDoor && length > 2.0;
+        if (!hasExplicitWalls && openings.length === 0) {
+          // Fallback to automatic detection if no explicit data and no openings found
+          const isExterior =
+            Math.abs(Math.abs(mid.z) - halfDepth) < halfDepth * 0.15 ||
+            Math.abs(Math.abs(mid.x) - planSize.x / 2) < planSize.x * 0.15;
+
+          const isFrontExterior =
+            isExterior &&
+            Math.abs(mid.z + halfDepth) < Math.max(0.5, halfDepth * 0.1);
+          if (isFrontExterior && length > 1.6) {
+            // Primary entry door on a front-facing exterior wall
+            openings.push({ type: 'door', position: 0.5, width: 0.9 });
+          } else if (!isExterior && length > 1.4) {
+            // Interior walls long enough become door segments to keep rooms accessible
+            openings.push({ type: 'door', position: 0.5, width: 0.9 });
+          } else if (isExterior && length > 2.0) {
+            openings.push({ type: 'window', position: 0.5, width: Math.min(1.8, length * 0.45) });
+          }
+        }
 
         const wallContainer = new THREE.Group();
         wallContainer.position.set(mid.x, wallHeight / 2, mid.z);
@@ -420,74 +572,162 @@ export class ThreeApartmentViewer {
           wallContainer.add(mesh);
         };
 
-        if (!wantsDoor && !wantsWindow) {
-          // Solid wall segment
+        if (openings.length === 0) {
+          // Solid wall segment - render all walls, even those without doors/windows
           addWallSlice(length, wallHeight, 0, 0);
-        } else if (wantsDoor) {
-          // Wall with a door cut-out
-          const doorWidth = 0.9;
-          const doorHeight = 2.1;
-          if (length <= doorWidth + 0.4) {
-            addWallSlice(length, wallHeight, 0, 0);
-          } else {
-            const sideLength = (length - doorWidth) / 2;
-            const sideCenterOffset = doorWidth / 2 + sideLength / 2;
-            // Left & right full-height wall pieces
-            addWallSlice(sideLength, wallHeight, -sideCenterOffset, 0);
-            addWallSlice(sideLength, wallHeight, sideCenterOffset, 0);
-            // Top piece above the door
-            const topHeight = Math.max(wallHeight - doorHeight, 0.3);
-            const topCenterY = doorHeight / 2;
-            addWallSlice(doorWidth, topHeight, 0, topCenterY);
-
-            // Door mesh in the opening
-            const doorGeom = new THREE.BoxGeometry(doorWidth * 0.98, doorHeight, wallThickness * 0.6);
-            const doorMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, metalness: 0.25, roughness: 0.55 });
-            const doorMesh = new THREE.Mesh(doorGeom, doorMat);
-            // Position so the door rests on the floor (y = 0 in world space)
-            doorMesh.position.set(0, doorHeight / 2 - wallHeight / 2, wallThickness * 0.35);
-            wallContainer.add(doorMesh);
-          }
-        } else if (wantsWindow) {
-          // Wall with a window cut-out
-          const windowWidth = Math.min(1.8, length * 0.45);
-          const windowHeight = wallHeight * 0.45;
-          const sillHeight = wallHeight * 0.9 - windowHeight; // keep head height near top
-
-          if (length <= windowWidth + 0.4 || windowHeight <= 0.3) {
-            addWallSlice(length, wallHeight, 0, 0);
-          } else {
-            const sideLength = (length - windowWidth) / 2;
-            const sideCenterOffset = windowWidth / 2 + sideLength / 2;
-
-            // Left & right piers
-            addWallSlice(sideLength, wallHeight, -sideCenterOffset, 0);
-            addWallSlice(sideLength, wallHeight, sideCenterOffset, 0);
-
-            // Wall below window
-            const bottomHeight = sillHeight;
-            const bottomCenterY = -wallHeight / 2 + bottomHeight / 2;
-            addWallSlice(windowWidth, bottomHeight, 0, bottomCenterY);
-
-            // Wall above window
-            const topHeight = wallHeight - (sillHeight + windowHeight);
-            const topCenterY = -wallHeight / 2 + sillHeight + windowHeight + topHeight / 2;
-            addWallSlice(windowWidth, topHeight, 0, topCenterY);
-
-            // Window glass in the opening
-            const windowGeom = new THREE.BoxGeometry(windowWidth * 0.98, windowHeight * 0.98, wallThickness * 0.3);
-            const windowMat = new THREE.MeshPhysicalMaterial({
-              color: 0x9ecffb,
-              metalness: 0.0,
-              roughness: 0.05,
-              transmission: 0.85,
-              transparent: true,
-              opacity: 0.95,
+        } else {
+          // Pre-load door model (if it exists) before rendering
+          // Windows use glass geometry instead of 3D models
+          const doorModel = await loadDoorModel('door').catch(() => null);
+          
+          // Render wall with multiple openings - cut wall at each opening
+          // Convert opening positions to local wall coordinates and calculate opening boundaries
+          const openingBoundaries: Array<{ start: number; end: number; type: 'door' | 'window'; width: number }> = [];
+          
+          openings.forEach(opening => {
+            const centerAlongWall = (opening.position - 0.5) * length;
+            const actualWidth = Math.max(opening.width, 0.5);
+            openingBoundaries.push({
+              start: centerAlongWall - actualWidth / 2,
+              end: centerAlongWall + actualWidth / 2,
+              type: opening.type,
+              width: actualWidth
             });
-            const windowMesh = new THREE.Mesh(windowGeom, windowMat);
-            const windowCenterY = -wallHeight / 2 + sillHeight + windowHeight / 2;
-            windowMesh.position.set(0, windowCenterY, wallThickness * 0.35);
-            wallContainer.add(windowMesh);
+          });
+          
+          // Sort boundaries by start position
+          openingBoundaries.sort((a, b) => a.start - b.start);
+          
+          // Render wall segments between openings
+          let currentPos = -length / 2; // Start from wall beginning
+          
+          openingBoundaries.forEach((boundary, idx) => {
+            // Render wall segment before this opening
+            if (boundary.start > currentPos + 0.1) {
+              const segmentLength = boundary.start - currentPos;
+              const segmentCenter = currentPos + segmentLength / 2;
+              addWallSlice(segmentLength, wallHeight, segmentCenter, 0);
+            }
+            
+            // Render opening-specific walls (above/below for windows, above for doors)
+            if (boundary.type === 'door') {
+              // Wall above door
+              const doorHeight = 2.2; // Increased door cutout height
+              const topHeight = Math.max(wallHeight - doorHeight, 0.3);
+              if (topHeight > 0.1) {
+                const topCenterY = doorHeight / 2;
+                const doorCenter = (boundary.start + boundary.end) / 2;
+                addWallSlice(boundary.width, topHeight, doorCenter, topCenterY);
+              }
+              
+              // Use 3D door model if available, otherwise use box geometry
+              if (doorModel) {
+                const doorClone = doorModel.clone(true);
+                
+                // Get original size before any transformations
+                const doorBox = new THREE.Box3().setFromObject(doorClone);
+                const doorSize = new THREE.Vector3();
+                doorBox.getSize(doorSize);
+                
+                // Calculate scale to fit the opening width and height
+                const scaleX = boundary.width / doorSize.x;
+                const scaleY = doorHeight / doorSize.y;
+                const scaleZ = (wallThickness * 0.6) / doorSize.z;
+                const uniformScale = Math.min(scaleX, scaleY, scaleZ) * 9; // Scale factor
+                
+                // Apply scale first
+                doorClone.scale.setScalar(uniformScale);
+                
+                // Apply rotation around Y-axis (vertical axis)
+                doorClone.rotation.y = Math.PI / 2; // Rotate 90 degrees
+                
+                // Recalculate bounding box after transformations to get actual center
+                const transformedBox = new THREE.Box3().setFromObject(doorClone);
+                const transformedCenter = new THREE.Vector3();
+                transformedBox.getCenter(transformedCenter);
+                
+                // Position door in wallContainer's local coordinate system:
+                // - X axis: along the wall (horizontal)
+                // - Y axis: vertical (floor at -wallHeight/2, ceiling at +wallHeight/2)
+                // - Z axis: through wall thickness
+                
+                // Calculate desired position
+                const doorCenterX = (boundary.start + boundary.end) / 2;
+                const doorBottomY = -wallHeight / 2; // Floor level (model's bottom is at y=0 in local space)
+                const doorZ = wallThickness * 0.35;
+                
+                // Adjust position to account for the model's actual center after transformation
+                // Since the model's bottom is at y=0, and we want it at floor level,
+                // we position it at doorBottomY. The transformedCenter.y gives us the offset
+                // from the origin to the geometric center, but since we positioned the model
+                // so bottom is at y=0, we don't need to adjust for Y.
+                // However, we do need to adjust for X and Z if the rotation changed the center.
+                const offsetX = transformedCenter.x;
+                const offsetZ = transformedCenter.z;
+                
+                doorClone.position.set(
+                  doorCenterX - offsetX*2+0.05,
+                  doorBottomY,
+                  doorZ - offsetZ/2
+                );
+                
+                wallContainer.add(doorClone);
+              } else {
+                // Fallback to box geometry
+                const doorGeom = new THREE.BoxGeometry(boundary.width * 0.98, doorHeight, wallThickness * 0.6);
+                const doorMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, metalness: 0.25, roughness: 0.55 });
+                const doorMesh = new THREE.Mesh(doorGeom, doorMat);
+                const doorCenter = (boundary.start + boundary.end) / 2;
+                doorMesh.position.set(doorCenter, doorHeight / 2 - wallHeight / 2, wallThickness * 0.35);
+                wallContainer.add(doorMesh);
+              }
+            } else if (boundary.type === 'window') {
+              // Walls above and below window
+              const windowHeight = wallHeight * 0.45;
+              const sillHeight = wallHeight * 0.9 - windowHeight;
+              
+              // Wall below window
+              const bottomHeight = sillHeight;
+              if (bottomHeight > 0.1) {
+                const bottomCenterY = -wallHeight / 2 + bottomHeight / 2;
+                const windowCenter = (boundary.start + boundary.end) / 2;
+                addWallSlice(boundary.width, bottomHeight, windowCenter, bottomCenterY);
+              }
+              
+              // Wall above window
+              const topHeight = wallHeight - (sillHeight + windowHeight);
+              if (topHeight > 0.1) {
+                const topCenterY = -wallHeight / 2 + sillHeight + windowHeight + topHeight / 2;
+                const windowCenter = (boundary.start + boundary.end) / 2;
+                addWallSlice(boundary.width, topHeight, windowCenter, topCenterY);
+              }
+              
+              // Use glass geometry for windows (not 3D models)
+              const windowGeom = new THREE.BoxGeometry(boundary.width * 0.98, windowHeight * 0.98, wallThickness * 0.3);
+              const windowMat = new THREE.MeshPhysicalMaterial({
+                color: 0x9ecffb,
+                metalness: 0.0,
+                roughness: 0.05,
+                transmission: 0.85,
+                transparent: true,
+                opacity: 0.95,
+              });
+              const windowMesh = new THREE.Mesh(windowGeom, windowMat);
+              const windowCenter = (boundary.start + boundary.end) / 2;
+              const windowCenterY = -wallHeight / 2 + sillHeight + windowHeight / 2;
+              windowMesh.position.set(windowCenter, windowCenterY, wallThickness * 0.35);
+              wallContainer.add(windowMesh);
+            }
+            
+            // Update current position to after this opening
+            currentPos = boundary.end;
+          });
+          
+          // Render final wall segment after last opening
+          if (currentPos < length / 2 - 0.1) {
+            const segmentLength = length / 2 - currentPos;
+            const segmentCenter = currentPos + segmentLength / 2;
+            addWallSlice(segmentLength, wallHeight, segmentCenter, 0);
           }
         }
 
