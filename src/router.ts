@@ -600,6 +600,23 @@ export class Router {
           </form>
         </div>
       </div>
+      
+      <!-- Thank You Modal -->
+      <div class="contact-modal" id="thank-you-modal" aria-hidden="true">
+        <div class="contact-modal__backdrop"></div>
+        <div class="contact-modal__dialog" role="dialog" aria-modal="true" style="max-width: 500px; text-align: center;">
+          <button class="contact-modal__close" type="button" aria-label="Close thank you message">&times;</button>
+          <header class="contact-modal__header">
+            <h2 style="color: #4CAF50; margin-bottom: 16px;">Thank You!</h2>
+            <p style="font-size: 16px; line-height: 1.6;">We've received your message and will get back to you soon.</p>
+          </header>
+          <div style="padding: 20px;">
+            <button type="button" class="auth-primary-btn" id="thank-you-close-btn" style="width: 100%;">
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
     `;
 
     let pageContent: string;
@@ -1733,6 +1750,10 @@ export class Router {
     const contactClose = contactModal.querySelector<HTMLButtonElement>('.contact-modal__close');
     const premiumBtn = this.appElement.querySelector<HTMLButtonElement>('.profile-plan-card-premium .profile-plan-btn');
     const plusBtn = this.appElement.querySelector<HTMLButtonElement>('.profile-plan-card-plus .profile-plan-btn');
+    const thankYouModal = this.appElement.querySelector<HTMLElement>('#thank-you-modal');
+    const thankYouBackdrop = thankYouModal?.querySelector<HTMLElement>('.contact-modal__backdrop');
+    const thankYouClose = thankYouModal?.querySelector<HTMLButtonElement>('.contact-modal__close');
+    const thankYouCloseBtn = thankYouModal?.querySelector<HTMLButtonElement>('#thank-you-close-btn');
 
     const setContactOpen = (open: boolean) => {
       contactModal.classList.toggle('open', open);
@@ -1742,6 +1763,16 @@ export class Router {
 
     const openContact = () => setContactOpen(true);
     const closeContact = () => setContactOpen(false);
+    
+    const setThankYouOpen = (open: boolean) => {
+      if (!thankYouModal) return;
+      thankYouModal.classList.toggle('open', open);
+      thankYouModal.setAttribute('aria-hidden', open ? 'false' : 'true');
+      document.body.style.overflow = open ? 'hidden' : '';
+    };
+    
+    const openThankYou = () => setThankYouOpen(true);
+    const closeThankYou = () => setThankYouOpen(false);
 
     [premiumBtn, plusBtn].forEach(button => {
       button?.addEventListener('click', (event) => {
@@ -1752,6 +1783,20 @@ export class Router {
 
     contactBackdrop?.addEventListener('click', () => closeContact());
     contactClose?.addEventListener('click', () => closeContact());
+    
+    // Handle form submission for pricing page contact modal
+    const form = contactModal.querySelector<HTMLFormElement>('.contact-modal__form');
+    form?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      // TODO: Implement form submission logic (e.g., send to backend API)
+      closeContact();
+      form.reset();
+      openThankYou();
+    });
+    
+    thankYouBackdrop?.addEventListener('click', () => closeThankYou());
+    thankYouClose?.addEventListener('click', () => closeThankYou());
+    thankYouCloseBtn?.addEventListener('click', () => closeThankYou());
   }
 
   private attachContactModalListeners(): void {
@@ -1791,14 +1836,32 @@ export class Router {
 
     // Handle form submission
     const form = contactModal.querySelector<HTMLFormElement>('.contact-modal__form');
+    const thankYouModal = this.appElement.querySelector<HTMLElement>('#thank-you-modal');
+    const thankYouBackdrop = thankYouModal?.querySelector<HTMLElement>('.contact-modal__backdrop');
+    const thankYouClose = thankYouModal?.querySelector<HTMLButtonElement>('.contact-modal__close');
+    const thankYouCloseBtn = thankYouModal?.querySelector<HTMLButtonElement>('#thank-you-close-btn');
+    
+    const setThankYouOpen = (open: boolean) => {
+      if (!thankYouModal) return;
+      thankYouModal.classList.toggle('open', open);
+      thankYouModal.setAttribute('aria-hidden', open ? 'false' : 'true');
+      document.body.style.overflow = open ? 'hidden' : '';
+    };
+    
+    const openThankYou = () => setThankYouOpen(true);
+    const closeThankYou = () => setThankYouOpen(false);
+    
     form?.addEventListener('submit', async (e) => {
       e.preventDefault();
       // TODO: Implement form submission logic (e.g., send to backend API)
-      // eslint-disable-next-line no-alert
-      alert('Thank you for your message! We\'ll get back to you soon.');
       closeContact();
       form.reset();
+      openThankYou();
     });
+    
+    thankYouBackdrop?.addEventListener('click', () => closeThankYou());
+    thankYouClose?.addEventListener('click', () => closeThankYou());
+    thankYouCloseBtn?.addEventListener('click', () => closeThankYou());
   }
 
   private async attachProductEventListeners(): Promise<void> {
